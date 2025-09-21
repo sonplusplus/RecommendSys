@@ -1,0 +1,7 @@
+tensorflow
+tensorflow-recommenders
+pandas
+sqlalchemy
+mysqlclient
+fastapi
+uvicorn[standard]
