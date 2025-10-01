@@ -76,7 +76,7 @@ class TwoTowerRecommender(tfrs.Model):
 products = dataset.map(lambda x: x["product_id"])
 
 model = TwoTowerRecommender(user_t, item_t)
-model.compile(optimizer=tf.keras.optimizers.Adagrad(learning_rate=0.1))
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.01))
 
 print("Start training")
 model.fit(train.batch(8192), epochs=5)

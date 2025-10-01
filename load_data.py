@@ -25,21 +25,30 @@ def load_tf_data():
         FROM Orders o
         JOIN OrderItems oi ON o.id = oi.order_id
         """
-        interactions_df = pd.read_sql(query, engine)
+        df = pd.read_sql(query, engine)
+        print("succes load data from sql")
     except exc.SQLAlchemyError as e:
         print(f"Error loading data from DB: {e}, Loading from JSON file")
-        interactions_df = None
+        df = None
     except Exception as e:
         print(f"Unexpected error: {e}, Loading from JSON file")
-        interactions_df = None
+        df = None
     
-    if interactions_df is None:
+    if df is None:
         try:
             with open('interactions.json', 'r',encoding='utf-8') as f:
                 data = json.load(f)
             interactions_df = pd.DataFrame(data)
             interactions_df['user_id'] = interactions_df['user_id'].astype(str)
             interactions_df['product_id'] = interactions_df['product_id'].astype(str)
+            
+            #load products data in file json if cant connect to sql 
+            with open('products.json', 'r',encoding='utf-8') as f:
+                products_data = json.load(f)
+            products_df = pd.DataFrame(products_data)
+            products_df['id'] = products_df['id'].astype(str)
+
+            df = pd.merge(interactions_df, products_df, on = 'product_id')
         except FileNotFoundError:
             print("Cant find file")
             return None, None, None
@@ -49,9 +58,12 @@ def load_tf_data():
         
     # Preprocess data
     #list unique ids for embedding layers
-    unique_user_ids = interactions_df.user_id.unique()
-    unique_product_ids = interactions_df.product_id.unique()
     
-    dataset = tf.data.Dataset.from_tensor_slices(dict(interactions_df))
+    unique_user_ids = df.user_id.unique()
+    unique_product_ids = df.product_id.unique()
+    unique_categories = df.category.unique()
 
-    return dataset, unique_user_ids, unique_product_ids
+    dataset_dict = {name : tf.convert_to_tensor(value) for name, value in df.items()}
+    dataset = tf.data.Dataset.from_tensor_slices(dataset_dict)
+    
+    return dataset,unique_user_ids, unique_product_ids, unique_categories,df['price'].values
