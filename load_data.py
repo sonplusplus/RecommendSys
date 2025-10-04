@@ -15,6 +15,41 @@ engine = create_engine(DB_URL)
 # FLAG: True = dùng DB, False = dùng CSV
 USE_DB = False
 
+def get_brand_from_name(name):
+    name = name.lower()
+    #----phone brands----
+    if 'iphone' in name or 'ipad' in name or 'macbook' in name:
+        return 'Apple'
+    elif 'samsung' in name:
+        return 'Samsung'
+    elif 'xiaomi' in name or 'redmi' in name:
+        return 'Xiaomi'
+    elif 'oppo' in name:
+        return 'Oppo'
+    elif 'vivo' in name:
+        return 'Vivo'
+    elif 'realme' in name:
+        return 'Realme'
+    #----laptop brands----
+    elif 'Acer' in name:
+        return 'Acer'
+    elif 'Asus' in name:
+        return 'Asus'
+    elif 'Dell' in name:
+        return 'Dell'  
+    elif 'HP' in name or 'Hewlett-Packard' in name:
+        return 'HP'
+    elif 'Lenovo' in name:
+        return 'Lenovo'
+    elif 'MSI' in name:
+        return 'MSI'
+    elif 'Logitech' in name:
+        return 'Logitech'
+    elif 'Sony' in name:
+        return 'Sony'
+    
+    else:
+        return 'Other'
 
 def load_tf_data():
     """Load and preprocess data
@@ -24,7 +59,7 @@ def load_tf_data():
 
     df = None
 
-    # --- Load từ DB ---
+    # DB
     if USE_DB:
         try:
             query = """SELECT
@@ -45,7 +80,7 @@ def load_tf_data():
             print(f"⚠️ Unexpected error: {e}")
             return None, None, None, None, None
 
-    # --- Load từ CSV ---
+    # CSV
     else:
         try:
             interactions_df = pd.read_csv("interactions.csv")
