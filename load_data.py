@@ -15,41 +15,6 @@ engine = create_engine(DB_URL)
 # FLAG: True = dùng DB, False = dùng CSV
 USE_DB = False
 
-def get_brand_from_name(name):
-    name = name.lower()
-    #----phone brands----
-    if 'iphone' in name or 'ipad' in name or 'macbook' in name:
-        return 'Apple'
-    elif 'samsung' in name:
-        return 'Samsung'
-    elif 'xiaomi' in name or 'redmi' in name:
-        return 'Xiaomi'
-    elif 'oppo' in name:
-        return 'Oppo'
-    elif 'vivo' in name:
-        return 'Vivo'
-    elif 'realme' in name:
-        return 'Realme'
-    #----laptop brands----
-    elif 'Acer' in name:
-        return 'Acer'
-    elif 'Asus' in name:
-        return 'Asus'
-    elif 'Dell' in name:
-        return 'Dell'  
-    elif 'HP' in name or 'Hewlett-Packard' in name:
-        return 'HP'
-    elif 'Lenovo' in name:
-        return 'Lenovo'
-    elif 'MSI' in name:
-        return 'MSI'
-    elif 'Logitech' in name:
-        return 'Logitech'
-    elif 'Sony' in name:
-        return 'Sony'
-    
-    else:
-        return 'Other'
 
 def load_tf_data():
     """Load and preprocess data
@@ -75,16 +40,21 @@ def load_tf_data():
             print("✅ Load data from SQL successfully")
         except exc.SQLAlchemyError as e:
             print(f"⚠️ Error loading data from DB: {e}")
-            return None, None, None, None, None
+            return None, None, None, None, None, None, None
         except Exception as e:
             print(f"⚠️ Unexpected error: {e}")
-            return None, None, None, None, None
+            return None, None, None, None, None, None, None
 
     # CSV
     else:
         try:
             interactions_df = pd.read_csv("interactions.csv")
             products_df = pd.read_csv("products.csv")
+            
+            for col in ['brand', 'description', 'category']:
+                if col not in products_df.columns:
+                    products_df[col] = ''
+                products_df[col] = products_df[col].fillna('').astype(str)
 
             # ép kiểu string cho chắc chắn
             interactions_df['user_id'] = interactions_df['user_id'].astype(str)
@@ -95,10 +65,10 @@ def load_tf_data():
             print("✅ Load data from CSV successfully")
         except FileNotFoundError:
             print("❌ CSV file not found")
-            return None, None, None, None, None
+            return None, None, None, None, None, None, None
         except Exception as e:
             print(f"❌ Error loading data from CSV: {e}")
-            return None, None, None, None, None
+            return None, None, None, None, None, None, None
 
     # ----------------------
     # Preprocess dữ liệu
@@ -106,18 +76,21 @@ def load_tf_data():
     unique_user_ids = df.user_id.unique()
     unique_product_ids = df.product_id.unique()
     unique_categories = df.category.unique()
+    unique_brands = df.brand.unique()
 
     dataset_dict = {name: tf.convert_to_tensor(value) for name, value in df.items()}
     dataset = tf.data.Dataset.from_tensor_slices(dataset_dict)
 
-    return dataset, unique_user_ids, unique_product_ids, unique_categories, df['price'].values
+    return dataset, unique_user_ids, unique_product_ids, unique_categories, unique_brands, df['price'].values, df['description'].values
 
 
 # ========= TEST =========
 if __name__ == "__main__":
-    dataset, users, products, categories, prices = load_tf_data()
+    dataset, users, products, categories, brands, prices, descriptions = load_tf_data()
     if dataset is not None:
         print(f"Số user: {len(users)}")
         print(f"Số sản phẩm: {len(products)}")
         print(f"Số loại category: {len(categories)}")
+        print(f"Số loại brand: {len(brands)}")
         print(f"Sample price: {prices[:5]}")
+        print(f"Sample description: {descriptions[0]}")
