@@ -4,101 +4,79 @@ from load_data import load_tf_data
 import numpy as np
 import os
 
-print("check gpu")
-gpus = tf.config.list_physical_devices('GPU')
-if gpus:
-    try:
-        
-        tf.config.set_visible_devices(gpus[0], 'GPU')
-        tf.config.experimental.set_memory_growth(gpus[0], True)
-        print(f"Đã tìm thấy và cấu hình để sử dụng GPU: {gpus[0].name}")
-    except RuntimeError as e:
-        print(e)
-else:
-    print("Cant find GPU, CPU instead")
-print("-------------------------------------\n")
-
-
-
-#load data
 dataset, unique_user_ids, unique_product_ids, unique_categories, unique_brands, product_prices, product_descriptions = load_tf_data()
-if dataset is None:
-    print("No data available")
-    exit()
 
-#split data 0.8 train, 0.2 test
+print(f"Dataset: {len(unique_user_ids)} users, {len(unique_product_ids)} products\n")
+
 tf.random.set_seed(42)
 shuffled = dataset.shuffle(10_000, seed=42, reshuffle_each_iteration=False)
 
-train_size = int(len(shuffled) * 0.8)
-train = shuffled.take(train_size)
-test = shuffled.skip(train_size)
+total_size = len(shuffled)
+train_size = int(total_size * 0.72)
+val_size = int(total_size * 0.08)
 
-#size of vector embeddings
+train = shuffled.take(train_size)
+val = shuffled.skip(train_size).take(val_size)
+test = shuffled.skip(train_size + val_size)
+
 embed_d = 32
 
-#user tower
+# USER TOWER - Giảm regularization
 user_t = tf.keras.Sequential([
-    #string user_id to unique num (first layer)
-    tf.keras.layers.StringLookup(
-        vocabulary=unique_user_ids, mask_token=None
-    ),
-    #change number represent for user to vector (second layer)
-    tf.keras.layers.Embedding(input_dim=len(unique_user_ids) + 1, output_dim=embed_d)
-])
+    tf.keras.layers.StringLookup(vocabulary=unique_user_ids, mask_token=None),
+    tf.keras.layers.Embedding(
+        len(unique_user_ids) + 1, embed_d,
+        embeddings_regularizer=tf.keras.regularizers.l2(0.0001)  # Giảm từ 0.001
+    )
+], name="user_tower")
 
-#item tower
-product_id_input = tf.keras.Input(shape = (1,), dtype = tf.string, name = 'product_id')
-category_input = tf.keras.Input(shape = (1,), dtype = tf.string, name = 'category')
-brand_input = tf.keras.Input(shape = (1,), dtype = tf.string, name = 'brand')
-price_input = tf.keras.Input(shape = (1,), dtype = tf.float32, name = 'price')
-description_input = tf.keras.Input(shape = (1,), dtype = tf.string, name = 'description')
+# ITEM TOWER - Giảm regularization và dropout
+product_id_input = tf.keras.Input(shape=(), dtype=tf.string, name='product_id')
+category_input = tf.keras.Input(shape=(), dtype=tf.string, name='category')
+brand_input = tf.keras.Input(shape=(), dtype=tf.string, name='brand')
+price_input = tf.keras.Input(shape=(), dtype=tf.float32, name='price')
+description_input = tf.keras.Input(shape=(), dtype=tf.string, name='description')
 
-#embedding layers
-product_id_emb = tf.keras.layers.Embedding(
-    len(unique_product_ids) + 1, embed_d)(tf.keras.layers.StringLookup(vocabulary=unique_product_ids)(product_id_input)
-)
+product_emb = tf.keras.layers.Embedding(
+    len(unique_product_ids) + 1, embed_d,
+    embeddings_regularizer=tf.keras.regularizers.l2(0.0001)
+)(tf.keras.layers.StringLookup(vocabulary=unique_product_ids)(product_id_input))
+product_emb = tf.keras.layers.Flatten()(product_emb)
+
 category_emb = tf.keras.layers.Embedding(
-    len(unique_categories) + 1, embed_d)(tf.keras.layers.StringLookup(vocabulary=unique_categories)(category_input)
-)
+    len(unique_categories) + 1, 8,
+    embeddings_regularizer=tf.keras.regularizers.l2(0.0001)
+)(tf.keras.layers.StringLookup(vocabulary=unique_categories)(category_input))
+category_emb = tf.keras.layers.Flatten()(category_emb)
+
 brand_emb = tf.keras.layers.Embedding(
-    len(unique_brands) + 1, embed_d)(tf.keras.layers.StringLookup(vocabulary=unique_brands)(brand_input)
-)
+    len(unique_brands) + 1, 8,
+    embeddings_regularizer=tf.keras.regularizers.l2(0.0001)
+)(tf.keras.layers.StringLookup(vocabulary=unique_brands)(brand_input))
+brand_emb = tf.keras.layers.Flatten()(brand_emb)
 
-#normalize price
+price_log = tf.math.log1p(price_input)
 norm_price = tf.keras.layers.Normalization(axis=None)
-norm_price.adapt(np.array(product_prices))
-proc_price = norm_price(price_input)
+norm_price.adapt(np.log1p(product_prices))
+proc_price = norm_price(price_log)
+proc_price = tf.keras.layers.Reshape((1,))(proc_price)
 
-#Description text embedding
-
-max_tokens = 1000   #max words in vocab
-
-#75% is 80.5 words, so if dataset change, need to rerun length_of_des.py to get new one
-out_seq_len = 81    #constant num of words in 1 desc
 text_vector = tf.keras.layers.TextVectorization(
-    max_tokens=max_tokens, 
-    output_sequence_length=out_seq_len
+    max_tokens=500, output_sequence_length=40,
+    standardize='lower_and_strip_punctuation'
 )
 text_vector.adapt(product_descriptions)
 vectorized_desc = text_vector(description_input)
-desc_emb = tf.keras.layers.Embedding(max_tokens,embed_d,mask_zero=True)(vectorized_desc)    
+desc_emb = tf.keras.layers.Embedding(500, 8)(vectorized_desc)
 desc_emb = tf.keras.layers.GlobalAveragePooling1D()(desc_emb)
+desc_emb = tf.keras.layers.Lambda(lambda x: tf.clip_by_value(x, -10.0, 10.0))(desc_emb)
 
-#merge all features
-all_f = tf.keras.layers.Concatenate()([
-    tf.keras.layers.Flatten()(product_id_emb),
-    tf.keras.layers.Flatten()(category_emb),
-    tf.keras.layers.Flatten()(brand_emb),
-    proc_price,
-    desc_emb
+combined = tf.keras.layers.Concatenate()([
+    product_emb, category_emb, brand_emb, proc_price, desc_emb
 ])
+combined = tf.keras.layers.Dropout(0.1)(combined)  # Giảm từ 0.4 xuống 0.1
+output = tf.keras.layers.Dense(embed_d)(combined)
 
-#Dense layers
-dense_out = tf.keras.layers.Dense(256, activation='relu')(all_f)
-final_out = tf.keras.layers.Dense(embed_d)(dense_out)
-
-#model for item
 item_t = tf.keras.Model(
     inputs={
         'product_id': product_id_input,
@@ -107,81 +85,137 @@ item_t = tf.keras.Model(
         'price': price_input,
         'description': description_input
     },
-    outputs=final_out
+    outputs=output,
+    name="item_tower"
 )
 
-#model two tower
-class TwoTowerRecommender(tfrs.Model):
-    def __init__(self, user_t, item_t):
+# TWO TOWER MODEL
+class TwoTowerModel(tfrs.Model):
+    def __init__(self, user_model, item_model):
         super().__init__()
-        self.user_tower = user_t
-        self.item_tower = item_t
-
-
-        all_prod_f = dataset.map(lambda x: {
-            'product_id': x['product_id'],    
-            'category': x['category'],
-            'brand': x['brand'],
-            'price': x['price'],
-            'description': x['description']
-        })
+        self.user_model = user_model
+        self.item_model = item_model
+        
         self.task = tfrs.tasks.Retrieval(
             metrics=tfrs.metrics.FactorizedTopK(
-                candidates=all_prod_f.batch(128).map(self.item_tower)
-                )
+                candidates=dataset.map(lambda x: {
+                    'product_id': x['product_id'],
+                    'category': x['category'],
+                    'brand': x['brand'],
+                    'price': x['price'],
+                    'description': x['description']
+                }).batch(128).map(item_model),
+                ks=[1, 5, 10, 50, 100]
+            ),
+            loss=tf.keras.losses.CategoricalCrossentropy(
+                from_logits=True,
+                reduction=tf.keras.losses.Reduction.SUM_OVER_BATCH_SIZE
+            ),
+            temperature=0.1
         )
-    def compute_loss(self, data, training=False):
-        user_emb = self.user_tower(data['user_id'])
+
+    def compute_loss(self, features, training=False):
+        user_embeddings = self.user_model(features["user_id"])
+        item_features = {k: features[k] for k in ['product_id', 'category', 'brand', 'price', 'description']}
+        item_embeddings = self.item_model(item_features, training=training)
+        return self.task(user_embeddings, item_embeddings, compute_metrics=not training)
+
+model = TwoTowerModel(user_t, item_t)
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.01))  # Tăng từ 0.001
+
+# Checkpoint callback
+os.makedirs("models/checkpoints", exist_ok=True)
+
+class TowerCheckpoint(tf.keras.callbacks.Callback):
+    def __init__(self):
+        super().__init__()
+        self.best_val_loss = float('inf')
+        self.best_epoch = 0
         
-        #make a dict to feed item tower
-        item_emb = {
-            'product_id': data['product_id'],
-            'category': data['category'],
-            'brand': data['brand'],
-            'price': data['price'],
-            'description': data['description']
-        }
-        return self.task(user_emb,item_emb,compute_metrics=not training)
+    def on_epoch_end(self, epoch, logs=None):
+        val_loss = logs.get('val_total_loss')
+        if val_loss < self.best_val_loss:
+            self.best_val_loss = val_loss
+            self.best_epoch = epoch + 1
+            self.model.user_model.save(f"models/checkpoints/user_tower_best")
+            self.model.item_model.save(f"models/checkpoints/item_tower_best")
+            print(f"\nSaved best towers at epoch {epoch + 1} (val_loss: {val_loss:.4f})")
 
+tower_checkpoint = TowerCheckpoint()
 
-model = TwoTowerRecommender(user_t, item_t)
-model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.01))
-
-print("Start training")
-model.fit(train.batch(8192), epochs=10)
-
-print("Evaluating")
-model.evaluate(test.batch(4096), return_dict=True)
-
-#save model
-print("\n Save model")
-MODELS_DIR = "models"
-ITEM_TOWER_DIR = os.path.join(MODELS_DIR, "item_tower")
-RS_MODEL_DIR = os.path.join(MODELS_DIR, "rs_model")
-if not os.path.exists(MODELS_DIR):
-    os.makedirs(MODELS_DIR)
-    print(f"Created path: {MODELS_DIR}")
-model.item_tower.save(ITEM_TOWER_DIR)
-print(f"Item tower saved at {ITEM_TOWER_DIR}")
-
-
-index = tfrs.layers.factorized_top_k.BruteForce(model.user_tower)
-all_prod_f_for_index = dataset.map(lambda x: {
-            'product_id': x['product_id'],    
-            'category': x['category'],
-            'brand': x['brand'],
-            'price': x['price'],
-            'description': x['description']
-        })
-
-#index tìm kiếm, truy xuất
-index.index_from_dataset(
-    tf.data.Dataset.zip((
-        all_prod_f_for_index.batch(100),
-        all_prod_f_for_index.batch(100).map(model.item_tower)
-    ))
+print("Training with Adam optimizer (lr=0.01) - 20 epochs\n")
+history = model.fit(
+    train.batch(128),
+    validation_data=val.batch(128),
+    epochs=20,  # Giảm từ 50 xuống 20
+    callbacks=[tower_checkpoint],
+    verbose=2
 )
 
-#save index
-index.save(RS_MODEL_DIR)
-print(f"Two tower model saved at {RS_MODEL_DIR}")
+# Load best towers
+print("\nLoading best towers...")
+best_user_t = tf.keras.models.load_model("models/checkpoints/user_tower_best")
+best_item_t = tf.keras.models.load_model("models/checkpoints/item_tower_best")
+
+# Rebuild model với best towers
+model_best = TwoTowerModel(best_user_t, best_item_t)
+model_best.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.01))
+
+# Summary
+print("\n" + "="*60)
+print("TRAINING SUMMARY")
+print("="*60)
+
+train_losses = history.history['total_loss']
+val_losses = history.history['val_total_loss']
+
+print(f"\nBest epoch: {tower_checkpoint.best_epoch}")
+print(f"  Best val loss: {tower_checkpoint.best_val_loss:.4f}")
+
+print(f"\nFinal epoch (20):")
+print(f"  Train loss: {train_losses[-1]:.4f}")
+print(f"  Val loss: {val_losses[-1]:.4f}")
+print(f"  Gap: {val_losses[-1] - train_losses[-1]:.4f}")
+
+# Test
+print("\n" + "="*60)
+print("EVALUATING ON TEST SET (using best model)")
+print("="*60)
+
+test_results = model_best.evaluate(test.batch(128), return_dict=True, verbose=0)
+print(f"\nTest metrics:")
+print(f"  Loss: {test_results['total_loss']:.4f}")
+print(f"  Top-1 accuracy: {test_results.get('factorized_top_k/top_1_categorical_accuracy', 0):.4f}")
+print(f"  Top-5 accuracy: {test_results.get('factorized_top_k/top_5_categorical_accuracy', 0):.4f}")
+print(f"  Top-10 accuracy: {test_results.get('factorized_top_k/top_10_categorical_accuracy', 0):.4f}")
+print(f"  Top-50 accuracy: {test_results.get('factorized_top_k/top_50_categorical_accuracy', 0):.4f}")
+print(f"  Top-100 accuracy: {test_results.get('factorized_top_k/top_100_categorical_accuracy', 0):.4f}")
+
+# Save final models
+print("\n" + "="*60)
+print("SAVING FINAL MODELS")
+print("="*60)
+
+model_best.item_model.save("models/item_tower")
+model_best.user_model.save("models/user_tower")
+print("User tower saved")
+print("Item tower saved")
+
+# Create index
+index = tfrs.layers.factorized_top_k.BruteForce(model_best.user_model)
+all_products = dataset.map(lambda x: {k: x[k] for k in ['product_id', 'category', 'brand', 'price', 'description']})
+index.index_from_dataset(
+    tf.data.Dataset.zip((
+        all_products.batch(100).map(lambda x: x["product_id"]),
+        all_products.batch(100).map(model_best.item_model)
+    ))
+)
+_ = index(tf.constant([unique_user_ids[0]]))
+index.save("models/rs_model")
+print("Index saved")
+
+print("\n" + "="*60)
+print("TRAINING COMPLETE")
+print("="*60)
+print(f"Best model from epoch {tower_checkpoint.best_epoch} saved")
+print("Models location: models/user_tower, models/item_tower, models/rs_model")
