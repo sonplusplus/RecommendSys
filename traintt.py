@@ -155,6 +155,8 @@ model.evaluate(test.batch(4096), return_dict=True)
 
 #save model
 print("\n Save model")
+model.item_tower.save("rs_model/item_tower")
+print("Item tower saved at rs_model/item_tower")
 index = tfrs.layers.factorized_top_k.BruteForce(model.user_tower)
 
 all_prod_f_for_index = dataset.map(lambda x: {
