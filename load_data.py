@@ -48,9 +48,9 @@ def load_tf_data():
     # CSV
     else:
         try:
-            interactions_df = pd.read_csv("interactions.csv")
-            products_df = pd.read_csv("products.csv")
-            
+            interactions_df = pd.read_csv("data/interactions.csv")
+            products_df = pd.read_csv("data/products.csv")
+
             for col in ['brand', 'description', 'category']:
                 if col not in products_df.columns:
                     products_df[col] = ''

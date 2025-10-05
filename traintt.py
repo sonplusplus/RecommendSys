@@ -1,8 +1,8 @@
-from pyexpat import features
 import tensorflow as tf
 import tensorflow_recommenders as tfrs
 from load_data import load_tf_data
 import numpy as np
+import os
 
 print("check gpu")
 gpus = tf.config.list_physical_devices('GPU')
@@ -155,10 +155,17 @@ model.evaluate(test.batch(4096), return_dict=True)
 
 #save model
 print("\n Save model")
-model.item_tower.save("rs_model/item_tower")
-print("Item tower saved at rs_model/item_tower")
-index = tfrs.layers.factorized_top_k.BruteForce(model.user_tower)
+MODELS_DIR = "models"
+ITEM_TOWER_DIR = os.path.join(MODELS_DIR, "item_tower")
+RS_MODEL_DIR = os.path.join(MODELS_DIR, "rs_model")
+if not os.path.exists(MODELS_DIR):
+    os.makedirs(MODELS_DIR)
+    print(f"Created path: {MODELS_DIR}")
+model.item_tower.save(ITEM_TOWER_DIR)
+print(f"Item tower saved at {ITEM_TOWER_DIR}")
 
+
+index = tfrs.layers.factorized_top_k.BruteForce(model.user_tower)
 all_prod_f_for_index = dataset.map(lambda x: {
             'product_id': x['product_id'],    
             'category': x['category'],
@@ -176,5 +183,5 @@ index.index_from_dataset(
 )
 
 #save index
-tf.saved_model.save(index, "rs_model")
-print("Model saved at rs_model")
+index.save(RS_MODEL_DIR)
+print(f"Two tower model saved at {RS_MODEL_DIR}")
