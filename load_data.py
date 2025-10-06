@@ -2,7 +2,7 @@ import pandas as pd
 from sqlalchemy import create_engine, exc
 import tensorflow as tf
 
-# ===== Config =====
+#config
 DB_USER = 'sonchoida'
 DB_PASSWORD = 'sonchoida'
 DB_HOST = 'localhost'
@@ -37,12 +37,12 @@ def load_tf_data():
             JOIN Products p ON oi.product_id = p.id
             """
             df = pd.read_sql(query, engine)
-            print("✅ Load data from SQL successfully")
+            print("load data from sql")
         except exc.SQLAlchemyError as e:
-            print(f"⚠️ Error loading data from DB: {e}")
+            print(f"error load sql: {e}")
             return None, None, None, None, None, None, None
         except Exception as e:
-            print(f"⚠️ Unexpected error: {e}")
+            print(f"error: {e}")
             return None, None, None, None, None, None, None
 
     # CSV
@@ -62,12 +62,12 @@ def load_tf_data():
             products_df['product_id'] = products_df['product_id'].astype(str)
 
             df = pd.merge(interactions_df, products_df, on="product_id")
-            print("✅ Load data from CSV successfully")
+            print("Load data from CSV successfully")
         except FileNotFoundError:
-            print("❌ CSV file not found")
+            print(" CSV file not found")
             return None, None, None, None, None, None, None
         except Exception as e:
-            print(f"❌ Error loading data from CSV: {e}")
+            print(f"Error loading data from CSV: {e}")
             return None, None, None, None, None, None, None
 
     # ----------------------

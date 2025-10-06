@@ -2,3 +2,4 @@
 myenv/
 __pycache__/
 models/
+data/phobert_embeddings.pkl
