@@ -237,7 +237,6 @@ def train_als_model():
     
     # Train ALS
     print("\n3. Training ALS model...")
-    print("="*60)
     
     als_model = AlternatingLeastSquares(
         n_factors=50,

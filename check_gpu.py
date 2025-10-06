@@ -1,11 +1,5 @@
-# check_gpu.py
-
 import os
 import sys
-
-
-
-
 import tensorflow as tf
 
 print("\n" + "="*70)
@@ -23,16 +17,14 @@ if gpus:
         print(f"  GPU {i}: {gpu.name}")
         details = tf.config.experimental.get_device_details(gpu)
         print(f"    Compute capability: {details.get('compute_capability', 'N/A')}")
-    print("\n" + "="*70)
-    print("✓✓✓ SUCCESS! Testing GPU computation...")
-    print("="*70)
+
+    print(" SUCCESS! Testing GPU computation...")
+
     with tf.device('/GPU:0'):
         a = tf.random.normal([1000, 1000])
         b = tf.random.normal([1000, 1000])
         c = tf.matmul(a, b)
-    print("✓ Matrix multiplication on GPU: PASSED")
-    print("✓✓✓ GPU is working correctly! ✓✓✓\n")
+    print("Matrix multiplication on GPU: PASSED")
+    print("GPU is working correctly!\n")
 else:
-    print("\n" + "="*70)
-    print("NO GPU DETECTED")
-    print("="*70)
+    print("kh tìm thấy gpu")
