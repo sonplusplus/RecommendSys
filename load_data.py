@@ -50,7 +50,11 @@ def load_tf_data():
         try:
             interactions_df = pd.read_csv("data/interactions.csv")
             products_df = pd.read_csv("data/products.csv")
-
+            if 'weight' not in interactions_df.columns:
+                print("⚠️ Warning: 'weight' column not found, using default weight=1")
+                interactions_df['weight'] = 1.0
+            else:
+                interactions_df['weight'] = interactions_df['weight'].astype(float)
             for col in ['brand', 'description', 'category']:
                 if col not in products_df.columns:
                     products_df[col] = ''
@@ -70,9 +74,8 @@ def load_tf_data():
             print(f"Error loading data from CSV: {e}")
             return None, None, None, None, None, None, None
 
-    # ----------------------
     # Preprocess dữ liệu
-    # ----------------------
+
     unique_user_ids = df.user_id.unique()
     unique_product_ids = df.product_id.unique()
     unique_categories = df.category.unique()

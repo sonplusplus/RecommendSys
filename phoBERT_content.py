@@ -260,7 +260,7 @@ if __name__ == "__main__":
         embeddings, product_ids = build_vietnamese_content_model()
     else:
         print("Using Sentence Transformers (faster)")
-        print("="*60)
+ 
         embeddings, product_ids = build_with_sentence_transformers()
     
     #test with first product
