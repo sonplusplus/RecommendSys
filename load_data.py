@@ -119,8 +119,3 @@ if __name__ == "__main__":
         print(f"Số loại brand: {len(brands):,}")
         print(f"Sample price: {prices[:5]}")
         print(f"Sample description: {descriptions[0][:100]}...")
-        print(f"\nWeight statistics:")
-        print(f"  Min: {weights.min()}")
-        print(f"  Max: {weights.max()}")
-        print(f"  Mean: {weights.mean():.2f}")
-        print(f"  Median: {pd.Series(weights).median():.2f}")
