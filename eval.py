@@ -5,10 +5,7 @@ from evaluator import RecommenderEvaluator
 
 
 def evaluate_trained_model():
-    """
-    Đánh giá mô hình ALS đã train
-    """
-    print("ĐÁNH GIÁ MÔ HÌNH RECOMMENDATION")
+
 
     
     # 1. Load model
@@ -19,15 +16,12 @@ def evaluate_trained_model():
         print("Model als cant be found")
         return
     
-    # 2. Load test data
-    print("\n2. Loading test data...")
+    
     try:
         # Thử load test set riêng
         test_df = pd.read_csv("data/test_interactions.csv")
-        print(f"✓ Loaded test set: {len(test_df):,} interactions")
+        print(f"Loaded test set: {len(test_df):,} interactions")
     except FileNotFoundError:
-        # Fallback: Split từ full data
-        print("No test_interactions.csv found. Splitting from full data...")
         df = pd.read_csv("data/interactions.csv")
         from sklearn.model_selection import train_test_split
         _, test_df = train_test_split(df, test_size=0.2, random_state=42)
