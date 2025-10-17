@@ -10,7 +10,7 @@ def check_cooccurrence(item_a, item_b):
     
     common = users_a & users_b
     
-    print(f"\n{'='*60}")
+
     print(f"Item A: {item_a}")
     print(f"  - Total users bought: {len(users_a)}")
     

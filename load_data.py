@@ -110,9 +110,6 @@ def load_tf_data():
 if __name__ == "__main__":
     dataset, users, products, categories, brands, prices, descriptions, weights = load_tf_data()
     if dataset is not None:
-        print(f"\n{'='*60}")
-        print(f"Dataset Statistics:")
-        print(f"{'='*60}")
         print(f"Số user: {len(users):,}")
         print(f"Số sản phẩm: {len(products):,}")
         print(f"Số loại category: {len(categories):,}")

@@ -2,9 +2,9 @@ import os
 import sys
 import tensorflow as tf
 
-print("\n" + "="*70)
+
 print("TENSORFLOW GPU CHECK")
-print("="*70)
+
 
 print(f"\nTensorFlow version: {tf.__version__}")
 print(f"Built with CUDA: {tf.test.is_built_with_cuda()}")

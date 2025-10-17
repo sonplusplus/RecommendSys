@@ -20,7 +20,7 @@ class PhoBERTContentModel:
         self.model = AutoModel.from_pretrained(model_name)
         self.model.eval()
         
-        # Move to GPU if available
+
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device)
         print(f"Model loaded on {self.device}")
@@ -64,11 +64,11 @@ class PhoBERTContentModel:
             with torch.no_grad():
                 outputs = self.model(**inputs)
             
-            # Mean pooling
+
             batch_embeddings = outputs.last_hidden_state.mean(dim=1)
             embeddings.append(batch_embeddings.cpu().numpy())
             
-            # Clear cache để tránh OOM
+
             if self.device.type == 'cuda':
                 torch.cuda.empty_cache()
         
@@ -81,9 +81,6 @@ def build_vietnamese_content_model():
     df = pd.read_csv(PRODUCTS_CSV)
     df['product_id'] = df['product_id'].astype(str)
     
-    # QUAN TRỌNG: Combine features với weight khác nhau
-
-    #dataset là name hoặc product name
     df['name'] = df.get('name', df.get('product_name', '')).fillna('')
     df['category'] = df['category'].fillna('')
     df['brand'] = df['brand'].fillna('')
@@ -101,7 +98,7 @@ def build_vietnamese_content_model():
     print(f"\nTotal products: {len(df)}")
     print(f"Sample combined text:\n{df['combined_features'].iloc[0]}\n")
     
-    # Initialize PhoBERT
+    # Init PhoBERT
     phobert = PhoBERTContentModel()
     
     embeddings = phobert.encode_batch(df['combined_features'].tolist())
@@ -228,7 +225,7 @@ def build_with_sentence_transformers():
             'normalized': True
         }, f)
     
-    print("✓ Done!")
+    print("Done!")
     return embeddings, df['product_id'].tolist()
 
 
@@ -238,9 +235,9 @@ def load_embeddings(path=OUTPUT_PATH):
     with open(path, 'rb') as f:
         data = pickle.load(f)
     
-    print(f"✓ Loaded {len(data['product_ids'])} products")
-    print(f"  Model: {data['model_name']}")
-    print(f"  Normalized: {data.get('normalized', False)}")
+    print(f"Loaded {len(data['product_ids'])} products")
+    print(f"Model: {data['model_name']}")
+    print(f"Normalized: {data.get('normalized', False)}")
     
     return data['embeddings'], data['product_ids']
 
@@ -256,14 +253,13 @@ if __name__ == "__main__":
     
     if args.method == 'phobert':
         print("Using PhoBERT (best for Vietnamese)")
-        print("="*60)
         embeddings, product_ids = build_vietnamese_content_model()
     else:
         print("Using Sentence Transformers (faster)")
  
         embeddings, product_ids = build_with_sentence_transformers()
     
-    #test with first product
+    #test with 1st product
     if embeddings is not None and len(product_ids) > 0:
         test_product = product_ids[0]
         recs = get_recommendations(test_product, embeddings, product_ids, top_k=5)
