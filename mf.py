@@ -22,7 +22,7 @@ class AlternatingLeastSquares:
         self.reverse_item_map = {}
     
     def fit(self, interactions_df):
-        # Validate columns
+        # missing col
         required_cols = ['user_id', 'product_id', 'weight']
         missing = [col for col in required_cols if col not in interactions_df.columns]
         if missing:
@@ -70,7 +70,7 @@ class AlternatingLeastSquares:
         return self
     
     def _solve_weighted(self, P, C, fixed_factors, reg):
-        """Solve: (Y^T C Y + λI) x = Y^T C P"""
+        """formula: (Y^T C Y + λI) x = Y^T C P"""
         n = P.shape[0]
         k = fixed_factors.shape[1]
         factors = np.zeros((n, k))
@@ -234,8 +234,7 @@ def train_als_model():
     if dataset is None:
         print("Failed to load data")
         return
-    
-    # Convert TensorFlow dataset to DataFrame
+
     interactions = []
     for batch in dataset.batch(1000):
         for i in range(len(batch['user_id'])):
@@ -273,7 +272,7 @@ def train_als_model():
     als_model.save("models/als_model.pkl")
     
 
-    print("\nDemo Recommendations")
+    print("\ndemo")
     sample_user = df['user_id'].value_counts().head(1).index[0]
     user_recs = als_model.predict_for_user_with_scores(sample_user, top_k=5)
     if user_recs:

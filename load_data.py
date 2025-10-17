@@ -65,9 +65,9 @@ def load_tf_data():
             
             #handle weight <0
             if interactions_df['weight'].min() < 0:
-                interactions_df['weight'] = interactions_df['weight'].clip(lower=0)
+                interactions_df['weight'] = interactions_df['weight'].clip(lower=1)
             
- 
+            #NA value
             for col in ['brand', 'description', 'category']:
                 if col not in products_df.columns:
                     products_df[col] = ''

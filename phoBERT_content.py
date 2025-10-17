@@ -153,11 +153,9 @@ def get_recommendations(product_id, embeddings, product_ids, top_k=10):
         raise ValueError(f"Product {product_id} not found")
     
     prod_idx = product_ids.index(product_id)
-    
-    # Calculate similarities (embeddings đã normalized)
     similarities = np.dot(embeddings, embeddings[prod_idx])
     
-    # Get top-k (exclude itself)
+    #top k sp 
     top_indices = np.argsort(similarities)[::-1][1:top_k+1]
     
     recommendations = [
@@ -170,67 +168,8 @@ def get_recommendations(product_id, embeddings, product_ids, top_k=10):
     
     return recommendations
 
-# pan thay thế (kh load phoBERT)
-def build_with_sentence_transformers():
-    """
-    Alternative approach using sentence-transformers
-    Faster but may have lower quality for Vietnamese
-    """
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError:
-        print("ERROR: sentence-transformers not installed")
-        print("Install: pip install sentence-transformers")
-        return None, None
-    
-    print("Loading Sentence Transformer...")
-    
-    # Try Vietnamese-specific model first
-    try:
-        model = SentenceTransformer('keepitreal/vietnamese-sbert')
-        print("✓ Loaded Vietnamese SBERT")
-    except:
-        # Fallback to multilingual
-        print("Vietnamese SBERT not found, using multilingual...")
-        model = SentenceTransformer('paraphrase-multilingual-mpnet-base-v2')
-    
-    # Load products
-    df = pd.read_csv(PRODUCTS_CSV)
-    df['product_id'] = df['product_id'].astype(str)
-    
-    df['name'] = df.get('name', df.get('product_name', '')).fillna('')
-    df['combined_features'] = (
-        df['name'] + '. ' +
-        df['name'] + '. ' +
-        df['category'].fillna('') + '. ' +
-        df['brand'].fillna('') + '. ' +
-        df['description'].fillna('')
-    )
-    
-    # Encode
-    print("Encoding products...")
-    embeddings = model.encode(
-        df['combined_features'].tolist(),
-        show_progress_bar=True,
-        batch_size=16,
-        normalize_embeddings=True  # QUAN TRỌNG: normalize luôn
-    )
-    
-    # Save
-    with open(OUTPUT_PATH, 'wb') as f:
-        pickle.dump({
-            'embeddings': embeddings,
-            'product_ids': df['product_id'].tolist(),
-            'model_name': 'sentence-transformers',
-            'normalized': True
-        }, f)
-    
-    print("Done!")
-    return embeddings, df['product_id'].tolist()
-
-
 def load_embeddings(path=OUTPUT_PATH):
-    """Load precomputed embeddings"""
+
     print(f"Loading embeddings from {path}...")
     with open(path, 'rb') as f:
         data = pickle.load(f)
@@ -242,29 +181,18 @@ def load_embeddings(path=OUTPUT_PATH):
     return data['embeddings'], data['product_ids']
 
 if __name__ == "__main__":
-    import argparse
     import os
     
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--method', choices=['phobert', 'sentence-transformers'],
-                       default='phobert', help='Which method to use')
-    parser.add_argument('--test', action='store_true', help='Test recommendations')
-    args = parser.parse_args()
+    print("Building PhoBERT embeddings...")
+    embeddings, product_ids = build_vietnamese_content_model()
     
-    if args.method == 'phobert':
-        print("Using PhoBERT (best for Vietnamese)")
-        embeddings, product_ids = build_vietnamese_content_model()
-    else:
-        print("Using Sentence Transformers (faster)")
- 
-        embeddings, product_ids = build_with_sentence_transformers()
-    
-    #test with 1st product
+    # Quick test
     if embeddings is not None and len(product_ids) > 0:
         test_product = product_ids[0]
         recs = get_recommendations(test_product, embeddings, product_ids, top_k=5)
         
-        print(f"\nRecommendations for product {test_product}:")
+        print(f"\nTest successful!")
+        print(f"Recommendations for {test_product}:")
         for i, rec in enumerate(recs, 1):
-            print(f"{i}. {rec['product_id']}: {rec['similarity']:.4f}")
+            print(f"  {i}. {rec['product_id']} (similarity: {rec['similarity']:.4f})")
         
