@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Query
 from typing import Dict, Optional
 import uvicorn
 
-from als import ALSModel
+from mf import AlternatingLeastSquares
 
 
 ALS_MODEL_PATH = "models/als_model.pkl"
@@ -25,12 +25,8 @@ products_df = None
 #LOAD MODELS
 
 try:    
-    with open(ALS_MODEL_PATH, 'rb') as f:
-        model_data = pickle.load(f)
+    als_model = AlternatingLeastSquares.load(ALS_MODEL_PATH)
     
-    als_model = ALSModel(model_data)
-    
-
     print(f"  Users: {len(als_model.user_map):,}")
     print(f"  Items: {len(als_model.item_map):,}")
     print(f"  Latent factors: {als_model.n_factors}")
@@ -43,8 +39,8 @@ except Exception as e:
     print(f"Error loading ALS model: {e}")
 
 try:
-    print("LOADING PHOBERT EMBEDDINGS")
-    print("="*70)
+    print("load phoBERT embs")
+
     
     with open(PHOBERT_EMBEDDINGS_PATH, 'rb') as f:
         phobert_data = pickle.load(f)
@@ -64,9 +60,8 @@ except Exception as e:
     print(f"Error loading PhoBERT: {e}")
 
 try:
-    print("\n" + "="*70)
-    print("LOADING PRODUCT METADATA")
-    print("="*70)
+    print("load product metadata")
+
     
     products_df = pd.read_csv(PRODUCTS_CSV_PATH)
     products_df['product_id'] = products_df['product_id'].astype(str)
@@ -138,7 +133,7 @@ def root():
             "user_personalization": als_model is not None and als_model.has_user_personalization(),
             "item_similarity": als_model is not None,
             "content_based": all_product_embeddings is not None,
-            "weighted_interactions": True  # NEW
+            "weighted_interactions": True
         },
         "models": {
             "collaborative": {
@@ -146,8 +141,8 @@ def root():
                 "status": "ready" if als_model else "unavailable",
                 "users": len(als_model.user_map) if als_model else 0,
                 "items": len(als_model.item_map) if als_model else 0,
-                "supports_weights": True,  # NEW
-                "alpha": als_model.alpha if als_model else None  # NEW
+                "supports_weights": True,
+                "alpha": als_model.alpha if als_model else None
             },
             "content_based": {
                 "type": "PhoBERT (Vietnamese NLP)",
@@ -227,7 +222,7 @@ def homepage_recommendations(
 
 
 @app.get("/recommend/content-based/{product_id}", tags=["Recommendations"])
-def content_based_recommendations(product_id: str, top_k: int = 10):    #phoBERT
+def content_based_recommendations(product_id: str, top_k: int = 10):
 
     if all_product_embeddings is None:
         raise HTTPException(status_code=503, detail="Content model not available")
@@ -462,7 +457,7 @@ def health_check():
     return health
 
 
-# === ERROR HANDLERS ===
+#handle err
 
 @app.exception_handler(404)
 def not_found_handler(request, exc):

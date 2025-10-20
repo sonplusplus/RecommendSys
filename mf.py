@@ -102,6 +102,9 @@ class AlternatingLeastSquares:
         
         return weighted_error / P.nnz + reg_loss
     
+    def has_user_personalization(self):
+        return self.user_factors is not None and len(self.user_map) > 0
+    
     def predict_for_user(self, user_id, top_k=10):
 
         if user_id not in self.user_map:
@@ -150,6 +153,29 @@ class AlternatingLeastSquares:
         
         top_indices = np.argsort(similarities)[::-1][1:top_k+1]
         return [self.reverse_item_map[idx] for idx in top_indices]
+    
+    def get_similar_items_with_scores(self, item_id, top_k=10):
+        """Similar items with similarity scores"""
+        if item_id not in self.item_map:
+            return None
+        
+        item_idx = self.item_map[item_id]
+        item_vec = self.item_factors[item_idx]
+        
+        item_norm = item_vec / (np.linalg.norm(item_vec) + 1e-8)
+        all_norms = self.item_factors / (
+            np.linalg.norm(self.item_factors, axis=1, keepdims=True) + 1e-8
+        )
+        similarities = all_norms @ item_norm
+        top_indices = np.argsort(similarities)[::-1][1:top_k+1]
+        
+        return [
+            {
+                'product_id': self.reverse_item_map[idx],
+                'similarity': float(similarities[idx])
+            }
+            for idx in top_indices
+        ]
     
     def save(self, path="models/als_model.pkl"):
         """Save model to disk"""
@@ -248,12 +274,10 @@ def train_als_model():
     
     print(f"Dataset: {len(df):,} interactions | {df['user_id'].nunique():,} users | {df['product_id'].nunique():,} products")
     
-    # Train/test split
     from sklearn.model_selection import train_test_split
     train_df, test_df = train_test_split(df, test_size=0.2, random_state=42, stratify=df['weight'])
     print(f"Split: {len(train_df):,} train | {len(test_df):,} test\n")
-    
-    # Train model
+
     als_model = AlternatingLeastSquares(
         n_factors=50,
         n_iterations=15,
