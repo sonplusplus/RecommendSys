@@ -73,7 +73,7 @@ try:
     products_df.set_index('product_id', inplace=True)
     products_df.fillna('', inplace=True)
     
-    print(f"✓ Product data loaded: {len(products_df):,} products")
+    print(f"Product data loaded: {len(products_df):,} products")
     
 except FileNotFoundError:
     print("products ds not found at", PRODUCTS_CSV_PATH)
@@ -91,7 +91,6 @@ else:
 
 
 def get_product_info(product_id: str) -> Dict:
-    """Get product metadata"""
     if products_df is None:
         raise HTTPException(status_code=503, detail="Product data not available")
     

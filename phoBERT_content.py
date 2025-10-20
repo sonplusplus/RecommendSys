@@ -75,7 +75,7 @@ class PhoBERTContentModel:
         return np.vstack(embeddings)
 
 def build_vietnamese_content_model():
-    """Build content model using PhoBERT"""
+    """Build content_based model using PhoBERT"""
     
     # Load products
     df = pd.read_csv(PRODUCTS_CSV)
@@ -142,7 +142,7 @@ def build_vietnamese_content_model():
     print("Vietnamese content model saved!")
     print(f"{len(product_ids)} products encoded")
     print(f"Embedding dimension: {embeddings.shape[1]}")
-    print(f"File size: {os.path.getsize(OUTPUT_PATH) / 1e6:.2f} MB")
+
     
     return embeddings, product_ids
 
@@ -186,7 +186,7 @@ if __name__ == "__main__":
     print("Building PhoBERT embeddings...")
     embeddings, product_ids = build_vietnamese_content_model()
     
-    # Quick test
+
     if embeddings is not None and len(product_ids) > 0:
         test_product = product_ids[0]
         recs = get_recommendations(test_product, embeddings, product_ids, top_k=5)
