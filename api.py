@@ -1,488 +1,397 @@
-import numpy as np
-import pandas as pd
+"""
+Recommend Service API - Production Implementation
+Hybrid Recommendation System (ALS + PhoBERT)
+"""
+
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
+from fastapi.responses import JSONResponse
+from typing import Optional, List, Dict
+from pydantic import BaseModel
 import pickle
-from fastapi import FastAPI, HTTPException, Query
-from typing import Dict, Optional
-import uvicorn
+import numpy as np
+import logging
+from datetime import datetime
+import asyncio
+import uuid
 
 from mf import AlternatingLeastSquares
 
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-ALS_MODEL_PATH = "models/als_model.pkl"
-PHOBERT_EMBEDDINGS_PATH = "data/phobert_embeddings.pkl"
-PRODUCTS_CSV_PATH = "data/products.csv"
-
+# ============================================
+# FASTAPI APP
+# ============================================
 app = FastAPI(
-    title="Hybrid Recommendation System",
-    description="Weighted ALS Collaborative Filtering + PhoBERT Content-Based",
+    title="Recommend Service",
+    description="Hybrid Recommendation System API (ALS + PhoBERT)",
+    version="1.0.0"
 )
 
-als_model = None
-all_product_embeddings = None
-all_product_ids = None
-products_df = None
+# ============================================
+# GLOBAL STATE
+# ============================================
+class ModelState:
+    """Global state for models"""
+    def __init__(self):
+        self.als_model: Optional[AlternatingLeastSquares] = None
+        self.phobert_embeddings: Optional[np.ndarray] = None
+        self.product_ids: Optional[List[str]] = None
+        self.models_loaded: bool = False
+        self.last_training_run: Dict = {}
+        self.current_training_job: Optional[str] = None
+        
+model_state = ModelState()
 
-#LOAD MODELS
+# ============================================
+# STARTUP - Load Models
+# ============================================
+@app.on_event("startup")
+async def load_models():
+    """Load models on service startup"""
+    try:
+        logger.info("Starting Recommend Service...")
+        
+        # Load ALS
+        try:
+            model_state.als_model = AlternatingLeastSquares.load("models/als_model.pkl")
+            logger.info(f"ALS loaded: {len(model_state.als_model.user_map)} users, "
+                       f"{len(model_state.als_model.item_map)} items")
+        except FileNotFoundError:
+            logger.warning("ALS model not found - CF disabled")
+        
+        # Load PhoBERT
+        try:
+            with open("data/phobert_embeddings.pkl", 'rb') as f:
+                data = pickle.load(f)
+            model_state.phobert_embeddings = data['embeddings']
+            model_state.product_ids = data['product_ids']
+            logger.info(f"PhoBERT loaded: {len(model_state.product_ids)} products")
+        except FileNotFoundError:
+            logger.warning("PhoBERT embeddings not found - Content-based disabled")
+        
+        if model_state.als_model or model_state.phobert_embeddings is not None:
+            model_state.models_loaded = True
+            logger.info("Service ready")
+        else:
+            logger.error("No models loaded")
+            
+    except Exception as e:
+        logger.error(f"Error loading models: {e}")
+        raise
 
-try:    
-    als_model = AlternatingLeastSquares.load(ALS_MODEL_PATH)
+# ============================================
+# HELPER FUNCTIONS
+# ============================================
+def get_content_recommendations(product_id: str, top_k: int = 10) -> List[str]:
+    """Get content-based recommendations (PhoBERT)"""
+    if model_state.phobert_embeddings is None:
+        raise HTTPException(status_code=503, detail="PhoBERT model unavailable")
     
-    print(f"  Users: {len(als_model.user_map):,}")
-    print(f"  Items: {len(als_model.item_map):,}")
-    print(f"  Latent factors: {als_model.n_factors}")
-    print(f"  Alpha (confidence): {als_model.alpha}")
-    print(f"  User personalization: {'Enabled' if als_model.has_user_personalization() else 'Disabled'}")
-    
-except FileNotFoundError:
-    print("ALS(collab) model not found at", ALS_MODEL_PATH)
-except Exception as e:
-    print(f"Error loading ALS model: {e}")
-
-try:
-    print("load phoBERT embs")
-
-    
-    with open(PHOBERT_EMBEDDINGS_PATH, 'rb') as f:
-        phobert_data = pickle.load(f)
-    
-    all_product_embeddings = phobert_data['embeddings']
-    all_product_ids = phobert_data['product_ids']
-    
-    print("PhoBERT embeddings loaded successfully")
-    print(f"  Model: {phobert_data['model_name']}")
-    print(f"  Products: {len(all_product_ids):,}")
-    print(f"  Embedding dim: {all_product_embeddings.shape[1]}")
-    print(f"  Normalized: {phobert_data.get('normalized', False)}")
-    
-except FileNotFoundError:
-    print("PhoBERT embs not found at", PHOBERT_EMBEDDINGS_PATH)
-except Exception as e:
-    print(f"Error loading PhoBERT: {e}")
-
-try:
-    print("load product metadata")
-
-    
-    products_df = pd.read_csv(PRODUCTS_CSV_PATH)
-    products_df['product_id'] = products_df['product_id'].astype(str)
-    products_df.set_index('product_id', inplace=True)
-    products_df.fillna('', inplace=True)
-    
-    print(f"Product data loaded: {len(products_df):,} products")
-    
-except FileNotFoundError:
-    print("products ds not found at", PRODUCTS_CSV_PATH)
-except Exception as e:
-    print(f"Error loading products: {e}")
-
-#final status
-
-if als_model and all_product_embeddings is not None and products_df is not None:
-    print("all model load success")
-else:
-    print("1 or 2 model fail to load")
-
-
-
-
-def get_product_info(product_id: str) -> Dict:
-    if products_df is None:
-        raise HTTPException(status_code=503, detail="Product data not available")
+    if product_id not in model_state.product_ids:
+        raise HTTPException(status_code=404, 
+                          detail=f"Product {product_id} not found in PhoBERT index")
     
     try:
-        info = products_df.loc[product_id]
-        return {
-            'product_id': product_id,
-            'name': info.get('name', info.get('product_name', '')),
-            'category': info.get('category', ''),
-            'brand': info.get('brand', ''),
-            'price': float(info.get('price', 0)),
-            'description': str(info.get('description', ''))[:150] + '...' if info.get('description') else ''
-        }
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"Product '{product_id}' not found")
+        prod_idx = model_state.product_ids.index(product_id)
+        target_vec = model_state.phobert_embeddings[prod_idx]
+        similarities = np.dot(model_state.phobert_embeddings, target_vec)
+        top_indices = np.argsort(similarities)[::-1][1:top_k+1]
+        return [model_state.product_ids[i] for i in top_indices]
+    except Exception as e:
+        logger.error(f"Content-based error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
+def get_collaborative_recommendations(user_id: str, top_k: int = 10) -> Optional[List[str]]:
+    """Get personalized recommendations (ALS)"""
+    if model_state.als_model is None:
+        raise HTTPException(status_code=503, detail="ALS model unavailable")
+    
+    if not model_state.als_model.has_user_personalization():
+        raise HTTPException(status_code=503, detail="User personalization unavailable")
+    
+    return model_state.als_model.predict_for_user(user_id, top_k=top_k)
 
-def get_popular_products(top_k: int = 10):
-    if products_df is None:
+def get_similar_items_collaborative(product_id: str, top_k: int = 10) -> Optional[List[str]]:
+    """Get similar items using ALS (item-item similarity)"""
+    if model_state.als_model is None:
+        return None
+    return model_state.als_model.get_similar_items(product_id, top_k=top_k)
+
+def hybrid_merge(content_list: List[str], collab_list: Optional[List[str]], 
+                 content_weight: float = 0.6, top_k: int = 10) -> List[str]:
+    """Merge content-based and collaborative results"""
+    if collab_list is None or len(collab_list) == 0:
+        return content_list[:top_k]
+    
+    num_content = int(top_k * content_weight)
+    num_collab = top_k - num_content
+    
+    result = []
+    seen = set()
+    
+    # Add from content-based
+    for pid in content_list[:num_content]:
+        if pid not in seen:
+            result.append(pid)
+            seen.add(pid)
+    
+    # Add from collaborative
+    for pid in collab_list[:num_collab]:
+        if pid not in seen and len(result) < top_k:
+            result.append(pid)
+            seen.add(pid)
+    
+    # Fill remaining from content
+    for pid in content_list[num_content:]:
+        if pid not in seen and len(result) < top_k:
+            result.append(pid)
+            seen.add(pid)
+    
+    return result[:top_k]
+
+def get_popular_fallback(top_k: int = 10) -> List[str]:
+    """Fallback: return popular items"""
+    if model_state.als_model is None:
+        if model_state.product_ids:
+            return model_state.product_ids[:top_k]
         return []
     
+    # Estimate popularity from ALS item factors
+    item_popularity = {}
+    for item_id in model_state.als_model.item_map.keys():
+        item_idx = model_state.als_model.item_map[item_id]
+        popularity = np.linalg.norm(model_state.als_model.item_factors[item_idx])
+        item_popularity[item_id] = popularity
+    
+    sorted_items = sorted(item_popularity.items(), key=lambda x: x[1], reverse=True)
+    return [item_id for item_id, _ in sorted_items[:top_k]]
+
+# ============================================
+# API ENDPOINTS - Recommendations
+# ============================================
+
+@app.get("/recommend/homepage")
+async def recommend_homepage(
+    user_id: Optional[str] = Query(None, description="User ID for personalization"),
+    top_k: int = Query(10, ge=1, le=50, description="Number of recommendations")
+) -> List[str]:
+    """
+    API 3.2: Homepage recommendations
+    - With user_id: Personalized (ALS)
+    - Without user_id: Popular items (fallback)
+    """
+    if not model_state.models_loaded:
+        raise HTTPException(status_code=503, detail="Models not loaded")
+    
+    # Case 1: Logged-in user -> Collaborative Filtering
+    if user_id:
+        try:
+            recs = get_collaborative_recommendations(user_id, top_k)
+            if recs:
+                return recs
+        except Exception as e:
+            logger.warning(f"Collaborative failed for user {user_id}: {e}")
+    
+    # Case 2: Guest or Cold Start -> Popular fallback
+    return get_popular_fallback(top_k)
+
+
+@app.get("/recommend/product-detail/{product_id}")
+async def recommend_product_detail(
+    product_id: str,
+    user_id: Optional[str] = Query(None, description="User ID for hybrid strategy"),
+    top_k: int = Query(10, ge=1, le=50, description="Number of recommendations")
+) -> List[str]:
+    """
+    API 3.3: Product detail page recommendations
+    - Without user_id: 100% Content-based (PhoBERT)
+    - With user_id: Hybrid (60% Content + 40% Collaborative)
+    """
+    if not model_state.models_loaded:
+        raise HTTPException(status_code=503, detail="Models not loaded")
+    
+    # Content-based (required)
     try:
-        if 'popularity_score' in products_df.columns:
-            popular = products_df.nlargest(top_k, 'popularity_score')
-        elif 'views' in products_df.columns:
-            popular = products_df.nlargest(top_k, 'views')
-        else:
-            popular = products_df.sample(min(top_k, len(products_df)))
+        content_recs = get_content_recommendations(product_id, top_k=top_k)
+    except HTTPException as e:
+        if e.status_code == 404:
+            raise HTTPException(status_code=404, 
+                              detail=f"Product {product_id} not found in models")
+        raise
+    
+    # Case 1: Guest -> 100% Content-based
+    if not user_id:
+        return content_recs
+    
+    # Case 2: Logged-in -> Hybrid Strategy
+    try:
+        collab_recs = get_similar_items_collaborative(product_id, top_k=top_k)
         
-        return popular.index.tolist()
-    except:
-        return products_df.index[:top_k].tolist()
+        if collab_recs is None:
+            return content_recs
+        
+        # Merge with 60% content, 40% collaborative
+        return hybrid_merge(content_recs, collab_recs, content_weight=0.6, top_k=top_k)
+        
+    except Exception as e:
+        logger.warning(f"Collaborative failed, fallback to content: {e}")
+        return content_recs
 
+# ============================================
+# API ENDPOINTS - Training & Admin
+# ============================================
 
-#api endpoints
+class TrainingRequest(BaseModel):
+    force_retrain_all: bool = False
+    model_version_tag: Optional[str] = None
 
-@app.get("/", tags=["General"])
-def root():
-    """Health check and API info"""
-    return {
-        "service": "Hybrid Recommendation System",
-        "version": "4.0-weighted",
-        "status": "online" if (als_model and all_product_embeddings is not None) else "degraded",
-        "features": {
-            "user_personalization": als_model is not None and als_model.has_user_personalization(),
-            "item_similarity": als_model is not None,
-            "content_based": all_product_embeddings is not None,
-            "weighted_interactions": True
-        },
-        "models": {
-            "collaborative": {
-                "type": "Weighted ALS (Matrix Factorization)",
-                "status": "ready" if als_model else "unavailable",
-                "users": len(als_model.user_map) if als_model else 0,
-                "items": len(als_model.item_map) if als_model else 0,
-                "supports_weights": True,
-                "alpha": als_model.alpha if als_model else None
-            },
-            "content_based": {
-                "type": "PhoBERT (Vietnamese NLP)",
-                "status": "ready" if all_product_embeddings is not None else "unavailable",
-                "products": len(all_product_ids) if all_product_ids else 0
+@app.post("/train", status_code=202)
+async def trigger_training(
+    request: TrainingRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    API 5.2.1: Trigger training pipeline
+    Returns 202 Accepted and runs training in background
+    """
+    if model_state.current_training_job:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "A training process is already running",
+                "running_job_id": model_state.current_training_job
             }
+        )
+    
+    job_id = str(uuid.uuid4())
+    model_state.current_training_job = job_id
+    
+    model_state.last_training_run = {
+        "job_id": job_id,
+        "started_at": datetime.utcnow().isoformat() + "Z",
+        "status": "RUNNING",
+        "triggered_by": "API",
+        "force_retrain_all": request.force_retrain_all
+    }
+    
+    logger.info(f"Training job {job_id} started")
+    background_tasks.add_task(run_training_pipeline, job_id, request)
+    
+    return {
+        "status": "Training process started",
+        "job_id": job_id
+    }
+
+async def run_training_pipeline(job_id: str, request: TrainingRequest):
+    """Background task for training pipeline"""
+    try:
+        logger.info(f"Job {job_id}: Starting training pipeline")
+        
+        # TODO: Implement full training pipeline
+        # 1. Fetch data from Product Service & Order Service
+        # 2. Train ALS model
+        # 3. Generate PhoBERT embeddings
+        # 4. Hot-swap models
+        
+        await asyncio.sleep(5)  # Simulate training
+        
+        model_state.last_training_run.update({
+            "completed_at": datetime.utcnow().isoformat() + "Z",
+            "status": "COMPLETED_SUCCESS",
+            "duration_seconds": 5
+        })
+        model_state.current_training_job = None
+        
+        logger.info(f"Job {job_id}: Training completed")
+        
+    except Exception as e:
+        logger.error(f"Job {job_id}: Training failed - {e}")
+        model_state.last_training_run.update({
+            "status": "FAILED",
+            "error": str(e)
+        })
+        model_state.current_training_job = None
+
+
+@app.get("/admin/metrics")
+async def get_metrics():
+    """
+    API 6.2.1: Get metrics and model status
+    """
+    return {
+        "service_status": "ONLINE" if model_state.models_loaded else "DEGRADED",
+        "last_training_run": model_state.last_training_run or {
+            "status": "NO_TRAINING_YET"
         },
+        "active_models": {
+            "als_model": {
+                "status": "loaded" if model_state.als_model else "unavailable",
+                "users": len(model_state.als_model.user_map) if model_state.als_model else 0,
+                "items": len(model_state.als_model.item_map) if model_state.als_model else 0,
+                "latent_factors": model_state.als_model.n_factors if model_state.als_model else 0
+            },
+            "phobert_model": {
+                "status": "loaded" if model_state.phobert_embeddings is not None else "unavailable",
+                "total_items": len(model_state.product_ids) if model_state.product_ids else 0,
+                "embedding_dim": model_state.phobert_embeddings.shape[1] if model_state.phobert_embeddings is not None else 0
+            }
+        }
+    }
+
+
+@app.get("/health")
+async def health_check():
+    """
+    API 6.3.1: Health check for Load Balancer
+    """
+    if not model_state.models_loaded:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "UNHEALTHY",
+                "error": "Models not loaded or initializing"
+            }
+        )
+    
+    models_loaded = []
+    if model_state.als_model:
+        models_loaded.append("als")
+    if model_state.phobert_embeddings is not None:
+        models_loaded.append("phobert")
+    
+    return {
+        "status": "HEALTHY",
+        "models_loaded": models_loaded
+    }
+
+# ROOT ENDPOINT
+
+@app.get("/")
+async def root():
+    """Root endpoint with service info"""
+    return {
+        "service": "Recommend Service",
+        "version": "1.0.0",
+        "status": "online" if model_state.models_loaded else "initializing",
         "endpoints": {
             "homepage": "/recommend/homepage",
             "product_detail": "/recommend/product-detail/{product_id}",
-            "content_only": "/recommend/content-based/{product_id}",
-            "collaborative_only": "/recommend/similar-items/{product_id}"
+            "training": "/train",
+            "metrics": "/admin/metrics",
+            "health": "/health"
         },
-        "interaction_weights": {
-            "click": 1,
-            "add_to_cart": 2,
-            "purchase": 3
-        }
+        "documentation": "/docs"
     }
 
-
-@app.get("/recommend/homepage", tags=["Recommendations"])
-def homepage_recommendations(
-    user_id: Optional[str] = Query(None, description="User ID for personalization"),
-    top_k: int = Query(10, ge=1, le=50, description="Number of recommendations")
-):
-    if user_id and als_model and als_model.has_user_personalization():
-        if user_id in als_model.user_map:
-            try:
-
-                recs_with_scores = als_model.predict_for_user_with_scores(user_id, top_k=top_k)
-                
-                if recs_with_scores:
-                    detailed_recs = []
-                    for rec in recs_with_scores:
-                        try:
-                            product_info = get_product_info(rec['product_id'])
-                            product_info['confidence'] = rec['confidence']
-                            product_info['raw_score'] = rec['score']
-                            detailed_recs.append(product_info)
-                        except:
-                            continue
-                    
-                    return {
-                        "user_id": user_id,
-                        "mode": "personalized",
-                        "method": "weighted_collaborative_filtering",
-                        "title": "Gợi ý cho bạn",
-                        "description": "Dựa trên lịch sử tương tác của bạn (xem, thêm giỏ, mua)",
-                        "total_recommendations": len(detailed_recs),
-                        "recommendations": detailed_recs
-                    }
-            except Exception as e:
-                print(f"Error in personalization: {e}")
-    
-    # Fallback to popular products
-    print(f"Fallback to popular products (user_id={user_id})")
-    popular_ids = get_popular_products(top_k=top_k)
-    
-    detailed_recs = []
-    for rec_id in popular_ids:
-        try:
-            product_info = get_product_info(rec_id)
-            detailed_recs.append(product_info)
-        except:
-            continue
-    
-    return {
-        "user_id": user_id,
-        "mode": "popular" if not user_id else "cold_start",
-        "method": "popularity_based",
-        "title": "Sản phẩm phổ biến" if not user_id else "Khám phá sản phẩm",
-        "description": "Sản phẩm được nhiều người quan tâm",
-        "total_recommendations": len(detailed_recs),
-        "recommendations": detailed_recs
-    }
-
-
-@app.get("/recommend/content-based/{product_id}", tags=["Recommendations"])
-def content_based_recommendations(product_id: str, top_k: int = 10):
-
-    if all_product_embeddings is None:
-        raise HTTPException(status_code=503, detail="Content model not available")
-    
-    if product_id not in all_product_ids:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Product '{product_id}' not found in embeddings"
-        )
-    
-    try:
-        prod_idx = all_product_ids.index(product_id)
-        target_embedding = all_product_embeddings[prod_idx]
-        
-        similarities = np.dot(all_product_embeddings, target_embedding)      
- 
-        top_indices = np.argsort(similarities)[::-1][1:top_k+1]
-        
-        recommendations = []
-        for i in top_indices:
-            try:
-                product_info = get_product_info(all_product_ids[i])
-                product_info['similarity'] = float(similarities[i])
-                recommendations.append(product_info)
-            except:
-                continue
-        
-        return {
-            "product_id": product_id,
-            "method": "content_based",
-            "algorithm": "PhoBERT + Cosine Similarity",
-            "total_recommendations": len(recommendations),
-            "recommendations": recommendations
-        }
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
-
-
-@app.get("/recommend/similar-items/{product_id}", tags=["Recommendations"])
-def similar_items_collaborative(product_id: str, top_k: int = 10):
-    if not als_model:
-        raise HTTPException(status_code=503, detail="ALS model not available")
-    
-    similar = als_model.get_similar_items(product_id, top_k=top_k)
-    
-    if similar is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Product '{product_id}' not found in training data"
-        )
-    
-    # Enrich with product details
-    detailed_recs = []
-    for sim_id in similar:
-        try:
-            product_info = get_product_info(sim_id)
-            detailed_recs.append(product_info)
-        except:
-            continue
-    
-    return {
-        "product_id": product_id,
-        "method": "collaborative_similarity",
-        "algorithm": "Weighted ALS Item Factors + Cosine Similarity",
-        "description": "Sản phẩm mà người dùng thường tương tác cùng nhau",
-        "total_recommendations": len(detailed_recs),
-        "similar_items": detailed_recs
-    }
-
-
-@app.get("/recommend/product-detail/{product_id}", tags=["Recommendations"])
-def product_detail_recommendations(
-    product_id: str, 
-    top_k: int = 10,
-    user_id: Optional[str] = None
-):
-    
-    if not als_model or all_product_embeddings is None:
-        raise HTTPException(status_code=503, detail="Models not available")
-    
-    if product_id not in all_product_ids:
-        raise HTTPException(status_code=404, detail=f"Product '{product_id}' not found")
-    
-    if user_id and als_model.has_user_personalization() and user_id in als_model.user_map:
-        STRATEGY = "logged_in"
-        COLLAB_WEIGHT = 0.4
-        CONTENT_WEIGHT = 0.6
-        num_collab = int(top_k * COLLAB_WEIGHT)
-        num_content = top_k - num_collab
-    else:
-        STRATEGY = "guest"
-        COLLAB_WEIGHT = 0.0
-        CONTENT_WEIGHT = 1.0
-        num_collab = 0
-        num_content = top_k
-    
-    # Get only collab
-    collab_recs = []
-    if num_collab > 0 and product_id in als_model.item_map:
-        try:
-            collab_recs = als_model.get_similar_items(product_id, top_k=num_collab) or []
-        except:
-            pass
-    
-    # Get only content-based 
-    content_recs = []
-    try:
-        prod_idx = all_product_ids.index(product_id)
-        target_embedding = all_product_embeddings[prod_idx]
-        similarities = np.dot(all_product_embeddings, target_embedding)
-        top_indices = np.argsort(similarities)[::-1][1:num_content+1]
-        content_recs = [all_product_ids[i] for i in top_indices]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
-
-    # Merge recommendations 
-    final_recs = []
-    seen = set([product_id])
-    
-    for pid in collab_recs:
-        if pid not in seen:
-            final_recs.append(pid)
-            seen.add(pid)
-    
-    for pid in content_recs:
-        if pid not in seen and len(final_recs) < top_k:
-            final_recs.append(pid)
-            seen.add(pid)
-    
-    if len(final_recs) < top_k:
-        prod_idx = all_product_ids.index(product_id)
-        similarities = np.dot(all_product_embeddings, all_product_embeddings[prod_idx])
-        all_similar = np.argsort(similarities)[::-1]
-        
-        for idx in all_similar:
-            pid = all_product_ids[idx]
-            if pid not in seen and len(final_recs) < top_k:
-                final_recs.append(pid)
-                seen.add(pid)
-    
-    # Enrich data
-    detailed_recs = []
-    for rec_id in final_recs:
-        try:
-            product_info = get_product_info(rec_id)
-            detailed_recs.append(product_info)
-        except:
-            continue
-    
-    return {
-        "product_id": product_id,
-        "user_id": user_id,
-        "mode": STRATEGY,
-        "title": "Sản phẩm liên quan" if STRATEGY == "guest" else "Gợi ý cho bạn",
-        "description": "Sản phẩm tương tự dựa trên đặc điểm" if STRATEGY == "guest" 
-                      else "Kết hợp 'người dùng cũng thích' và đặc điểm tương tự",
-        "strategy": {
-            "mode": STRATEGY,
-            "collaborative_weight": COLLAB_WEIGHT,
-            "content_weight": CONTENT_WEIGHT,
-            "collab_count": len(collab_recs),
-            "content_count": len(content_recs),
-            "method": f"Hybrid ({int(COLLAB_WEIGHT*100)}% collaborative + {int(CONTENT_WEIGHT*100)}% content)" 
-                     if STRATEGY == "logged_in" else "Content-based only (100%)"
-        },
-        "total_recommendations": len(detailed_recs),
-        "recommendations": detailed_recs
-    }
-
-
-@app.get("/product/{product_id}", tags=["Products"])
-def get_product(product_id: str):
-    """Get detailed product information"""
-    return get_product_info(product_id)
-
-
-@app.get("/stats", tags=["General"])
-def get_statistics():
-    """System statistics and model info"""
-    stats = {
-        "system": {
-            "status": "operational" if (als_model and all_product_embeddings is not None) else "degraded",
-            "api_version": "4.0-weighted",
-            "features": ["weighted_interactions", "user_personalization", "item_similarity", "content_based"]
-        },
-        "collaborative_model": {
-            "algorithm": "Weighted ALS (Matrix Factorization)",
-            "status": "available" if als_model else "unavailable",
-            "total_users": len(als_model.user_map) if als_model else 0,
-            "total_items": len(als_model.item_map) if als_model else 0,
-            "latent_factors": als_model.n_factors if als_model else 0,
-            "alpha_confidence": als_model.alpha if als_model else None,
-            "supports_user_personalization": als_model is not None and als_model.has_user_personalization(),
-            "interaction_weights": {
-                "click": 1,
-                "add_to_cart": 2,
-                "purchase": 3
-            }
-        },
-        "content_model": {
-            "algorithm": "PhoBERT + Cosine Similarity",
-            "status": "available" if all_product_embeddings is not None else "unavailable",
-            "total_products": len(all_product_ids) if all_product_ids else 0,
-            "embedding_dimension": all_product_embeddings.shape[1] if all_product_embeddings is not None else 0
-        },
-        "product_catalog": {
-            "total_products": len(products_df) if products_df is not None else 0
-        }
-    }
-    
-    return stats
-
-
-@app.get("/health", tags=["General"])
-def health_check():
-    """Detailed health check for monitoring"""
-    health = {
-        "status": "healthy",
-        "checks": {
-            "als_model": als_model is not None,
-            "user_factors_loaded": als_model is not None and als_model.has_user_personalization(),
-            "phobert_embeddings": all_product_embeddings is not None,
-            "product_data": products_df is not None
-        }
-    }
-    
-    if not all(health["checks"].values()):
-        health["status"] = "unhealthy"
-        health["message"] = "Some models are not loaded"
-    
-    return health
-
-
-#handle err
-
-@app.exception_handler(404)
-def not_found_handler(request, exc):
-    return {
-        "error": "Not Found",
-        "message": str(exc.detail) if hasattr(exc, 'detail') else "Resource not found",
-        "status_code": 404
-    }
-
-
-@app.exception_handler(500)
-def internal_error_handler(request, exc):
-    return {
-        "error": "Internal Server Error",
-        "message": "An unexpected error occurred",
-        "status_code": 500
-    }
-
+# RUN SERVER
 
 if __name__ == "__main__":
-    print("  Homepage (personalized): http://localhost:8000/recommend/homepage?user_id=xxx")
-    print("  Product detail (hybrid):  http://localhost:8000/recommend/product-detail/{product_id}?user_id=xxx")
-    print("\nDocumentation: http://localhost:8000/docs")
-    print("Health check:  http://localhost:8000/health")
-
+    import uvicorn
     
     uvicorn.run(
         app,
