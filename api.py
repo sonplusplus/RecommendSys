@@ -13,22 +13,20 @@ import logging
 from datetime import datetime
 import asyncio
 import uuid
+import socket
 
 from mf import AlternatingLeastSquares
+import py_eureka_client.eureka_client as eureka_client
 
-# Setup logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# ============================================
-# FASTAPI APP
-# ============================================
 app = FastAPI(
     title="Recommend Service",
-    description="Hybrid Recommendation System API (ALS + PhoBERT)",
+    description="Hybrid Recommendation System API",
     version="1.0.0"
 )
 
@@ -36,7 +34,7 @@ app = FastAPI(
 # GLOBAL STATE
 # ============================================
 class ModelState:
-    """Global state for models"""
+    """Manages ML models and training state"""
     def __init__(self):
         self.als_model: Optional[AlternatingLeastSquares] = None
         self.phobert_embeddings: Optional[np.ndarray] = None
@@ -48,23 +46,49 @@ class ModelState:
 model_state = ModelState()
 
 # ============================================
-# STARTUP - Load Models
+# STARTUP
 # ============================================
 @app.on_event("startup")
-async def load_models():
-    """Load models on service startup"""
+async def startup():
+    """Initialize service: Register with Eureka and load ML models"""
     try:
         logger.info("Starting Recommend Service...")
         
-        # Load ALS
+        # Register with Eureka Server
+        hostname = socket.gethostname()
+        ip_address = socket.gethostbyname(hostname)
+        
+        logger.info(f"Registering with Eureka at {ip_address}:8888")
+        
+        eureka_client.init(
+            eureka_server="http://localhost:8761/eureka",
+            app_name="RECOMMEND-SERVICE",
+            instance_port=8888,
+            instance_ip=ip_address,
+            instance_host=hostname,
+            metadata={
+                "version": "1.0.0",
+                "profile": "production",
+                "ml_models": "ALS+PhoBERT"
+            },
+            health_check_url=f"http://{ip_address}:8888/health",
+            status_page_url=f"http://{ip_address}:8888/admin/metrics",
+            lease_renewal_interval_in_secs=30,  # Heartbeat interval
+            lease_duration_in_secs=90,  # Timeout before removal
+            status="UP"
+        )
+        
+        logger.info("Successfully registered with Eureka")
+        
+        # Load ALS model (Collaborative Filtering)
         try:
             model_state.als_model = AlternatingLeastSquares.load("models/als_model.pkl")
             logger.info(f"ALS loaded: {len(model_state.als_model.user_map)} users, "
                        f"{len(model_state.als_model.item_map)} items")
         except FileNotFoundError:
-            logger.warning("ALS model not found - CF disabled")
+            logger.warning("ALS model not found - Collaborative filtering disabled")
         
-        # Load PhoBERT
+        # Load PhoBERT embeddings (Content-based)
         try:
             with open("data/phobert_embeddings.pkl", 'rb') as f:
                 data = pickle.load(f)
@@ -74,32 +98,31 @@ async def load_models():
         except FileNotFoundError:
             logger.warning("PhoBERT embeddings not found - Content-based disabled")
         
-        if model_state.als_model or model_state.phobert_embeddings is not None:
-            model_state.models_loaded = True
-            logger.info("Service ready")
-        else:
-            logger.error("No models loaded")
+        model_state.models_loaded = bool(model_state.als_model or model_state.phobert_embeddings is not None)
+        logger.info(f"Service ready: {model_state.models_loaded}")
             
     except Exception as e:
-        logger.error(f"Error loading models: {e}")
+        logger.error(f"Startup error: {e}")
         raise
 
 # ============================================
 # HELPER FUNCTIONS
 # ============================================
 def get_content_recommendations(product_id: str, top_k: int = 10) -> List[str]:
-    """Get content-based recommendations (PhoBERT)"""
+    """Content-based recommendations using PhoBERT embeddings"""
     if model_state.phobert_embeddings is None:
         raise HTTPException(status_code=503, detail="PhoBERT model unavailable")
     
     if product_id not in model_state.product_ids:
-        raise HTTPException(status_code=404, 
-                          detail=f"Product {product_id} not found in PhoBERT index")
+        raise HTTPException(status_code=404, detail=f"Product {product_id} not found")
     
     try:
+        # Calculate cosine similarity
         prod_idx = model_state.product_ids.index(product_id)
         target_vec = model_state.phobert_embeddings[prod_idx]
         similarities = np.dot(model_state.phobert_embeddings, target_vec)
+        
+        # Get top-k similar products (exclude self)
         top_indices = np.argsort(similarities)[::-1][1:top_k+1]
         return [model_state.product_ids[i] for i in top_indices]
     except Exception as e:
@@ -107,7 +130,7 @@ def get_content_recommendations(product_id: str, top_k: int = 10) -> List[str]:
         raise HTTPException(status_code=500, detail=str(e))
 
 def get_collaborative_recommendations(user_id: str, top_k: int = 10) -> Optional[List[str]]:
-    """Get personalized recommendations (ALS)"""
+    """Personalized recommendations using ALS collaborative filtering"""
     if model_state.als_model is None:
         raise HTTPException(status_code=503, detail="ALS model unavailable")
     
@@ -117,20 +140,20 @@ def get_collaborative_recommendations(user_id: str, top_k: int = 10) -> Optional
     return model_state.als_model.predict_for_user(user_id, top_k=top_k)
 
 def get_similar_items_collaborative(product_id: str, top_k: int = 10) -> Optional[List[str]]:
-    """Get similar items using ALS (item-item similarity)"""
+    """Item-item similarity using ALS item factors"""
     if model_state.als_model is None:
         return None
     return model_state.als_model.get_similar_items(product_id, top_k=top_k)
 
 def hybrid_merge(content_list: List[str], collab_list: Optional[List[str]], 
                  content_weight: float = 0.6, top_k: int = 10) -> List[str]:
-    """Merge content-based and collaborative results"""
-    if collab_list is None or len(collab_list) == 0:
+    """Merge content-based and collaborative results with weighted strategy"""
+    if not collab_list:
         return content_list[:top_k]
     
+    # Calculate split: 60% content, 40% collaborative
     num_content = int(top_k * content_weight)
     num_collab = top_k - num_content
-    
     result = []
     seen = set()
     
@@ -146,7 +169,7 @@ def hybrid_merge(content_list: List[str], collab_list: Optional[List[str]],
             result.append(pid)
             seen.add(pid)
     
-    # Fill remaining from content
+    # Fill remaining slots from content
     for pid in content_list[num_content:]:
         if pid not in seen and len(result) < top_k:
             result.append(pid)
@@ -155,13 +178,11 @@ def hybrid_merge(content_list: List[str], collab_list: Optional[List[str]],
     return result[:top_k]
 
 def get_popular_fallback(top_k: int = 10) -> List[str]:
-    """Fallback: return popular items"""
+    """Fallback: return popular items based on ALS item factor norms"""
     if model_state.als_model is None:
-        if model_state.product_ids:
-            return model_state.product_ids[:top_k]
-        return []
+        return model_state.product_ids[:top_k] if model_state.product_ids else []
     
-    # Estimate popularity from ALS item factors
+    # Estimate popularity from item factor magnitudes
     item_popularity = {}
     for item_id in model_state.als_model.item_map.keys():
         item_idx = model_state.als_model.item_map[item_id]
@@ -172,23 +193,22 @@ def get_popular_fallback(top_k: int = 10) -> List[str]:
     return [item_id for item_id, _ in sorted_items[:top_k]]
 
 # ============================================
-# API ENDPOINTS - Recommendations
+# RECOMMENDATION ENDPOINTS
 # ============================================
-
 @app.get("/recommend/homepage")
 async def recommend_homepage(
     user_id: Optional[str] = Query(None, description="User ID for personalization"),
-    top_k: int = Query(10, ge=1, le=50, description="Number of recommendations")
+    top_k: int = Query(10, ge=1, le=50)
 ) -> List[str]:
     """
-    API 3.2: Homepage recommendations
-    - With user_id: Personalized (ALS)
-    - Without user_id: Popular items (fallback)
+    Homepage recommendations:
+    - Logged-in users: Personalized via ALS
+    - Guest users: Popular items fallback
     """
     if not model_state.models_loaded:
         raise HTTPException(status_code=503, detail="Models not loaded")
     
-    # Case 1: Logged-in user -> Collaborative Filtering
+    # Try personalized recommendations for logged-in users
     if user_id:
         try:
             recs = get_collaborative_recommendations(user_id, top_k)
@@ -197,75 +217,60 @@ async def recommend_homepage(
         except Exception as e:
             logger.warning(f"Collaborative failed for user {user_id}: {e}")
     
-    # Case 2: Guest or Cold Start -> Popular fallback
+    # Fallback to popular items
     return get_popular_fallback(top_k)
-
 
 @app.get("/recommend/product-detail/{product_id}")
 async def recommend_product_detail(
     product_id: str,
     user_id: Optional[str] = Query(None, description="User ID for hybrid strategy"),
-    top_k: int = Query(10, ge=1, le=50, description="Number of recommendations")
+    top_k: int = Query(10, ge=1, le=50)
 ) -> List[str]:
     """
-    API 3.3: Product detail page recommendations
-    - Without user_id: 100% Content-based (PhoBERT)
-    - With user_id: Hybrid (60% Content + 40% Collaborative)
+    Product detail recommendations:
+    - Guest: 100% Content-based (PhoBERT)
+    - Logged-in: Hybrid (60% Content + 40% Collaborative)
     """
     if not model_state.models_loaded:
         raise HTTPException(status_code=503, detail="Models not loaded")
     
-    # Content-based (required)
+    # Always get content-based recommendations
     try:
         content_recs = get_content_recommendations(product_id, top_k=top_k)
     except HTTPException as e:
         if e.status_code == 404:
-            raise HTTPException(status_code=404, 
-                              detail=f"Product {product_id} not found in models")
+            raise HTTPException(status_code=404, detail=f"Product {product_id} not found")
         raise
     
-    # Case 1: Guest -> 100% Content-based
+    # Guest users: content-based only
     if not user_id:
         return content_recs
     
-    # Case 2: Logged-in -> Hybrid Strategy
+    # Logged-in users: hybrid strategy
     try:
         collab_recs = get_similar_items_collaborative(product_id, top_k=top_k)
-        
-        if collab_recs is None:
-            return content_recs
-        
-        # Merge with 60% content, 40% collaborative
-        return hybrid_merge(content_recs, collab_recs, content_weight=0.6, top_k=top_k)
-        
+        if collab_recs:
+            return hybrid_merge(content_recs, collab_recs, content_weight=0.6, top_k=top_k)
     except Exception as e:
-        logger.warning(f"Collaborative failed, fallback to content: {e}")
-        return content_recs
+        logger.warning(f"Collaborative failed: {e}")
+    
+    return content_recs
 
 # ============================================
-# API ENDPOINTS - Training & Admin
+# ADMIN ENDPOINTS
 # ============================================
-
 class TrainingRequest(BaseModel):
+    """Request body for training trigger"""
     force_retrain_all: bool = False
     model_version_tag: Optional[str] = None
 
 @app.post("/train", status_code=202)
-async def trigger_training(
-    request: TrainingRequest,
-    background_tasks: BackgroundTasks
-):
-    """
-    API 5.2.1: Trigger training pipeline
-    Returns 202 Accepted and runs training in background
-    """
+async def trigger_training(request: TrainingRequest, background_tasks: BackgroundTasks):
+    """Trigger model retraining (runs in background)"""
     if model_state.current_training_job:
         raise HTTPException(
             status_code=409,
-            detail={
-                "error": "A training process is already running",
-                "running_job_id": model_state.current_training_job
-            }
+            detail={"error": "Training already running", "job_id": model_state.current_training_job}
         )
     
     job_id = str(uuid.uuid4())
@@ -275,28 +280,24 @@ async def trigger_training(
         "job_id": job_id,
         "started_at": datetime.utcnow().isoformat() + "Z",
         "status": "RUNNING",
-        "triggered_by": "API",
         "force_retrain_all": request.force_retrain_all
     }
     
     logger.info(f"Training job {job_id} started")
     background_tasks.add_task(run_training_pipeline, job_id, request)
     
-    return {
-        "status": "Training process started",
-        "job_id": job_id
-    }
+    return {"status": "Training started", "job_id": job_id}
 
 async def run_training_pipeline(job_id: str, request: TrainingRequest):
-    """Background task for training pipeline"""
+    """Background task: Train ALS + generate PhoBERT embeddings"""
     try:
-        logger.info(f"Job {job_id}: Starting training pipeline")
+        logger.info(f"Job {job_id}: Training started")
         
-        # TODO: Implement full training pipeline
-        # 1. Fetch data from Product Service & Order Service
+        # TODO: Implement training pipeline
+        # 1. Fetch data from Product/Order services
         # 2. Train ALS model
         # 3. Generate PhoBERT embeddings
-        # 4. Hot-swap models
+        # 4. Hot-swap models without downtime
         
         await asyncio.sleep(5)  # Simulate training
         
@@ -306,28 +307,19 @@ async def run_training_pipeline(job_id: str, request: TrainingRequest):
             "duration_seconds": 5
         })
         model_state.current_training_job = None
-        
         logger.info(f"Job {job_id}: Training completed")
         
     except Exception as e:
         logger.error(f"Job {job_id}: Training failed - {e}")
-        model_state.last_training_run.update({
-            "status": "FAILED",
-            "error": str(e)
-        })
+        model_state.last_training_run.update({"status": "FAILED", "error": str(e)})
         model_state.current_training_job = None
-
 
 @app.get("/admin/metrics")
 async def get_metrics():
-    """
-    API 6.2.1: Get metrics and model status
-    """
+    """Service metrics and model status"""
     return {
         "service_status": "ONLINE" if model_state.models_loaded else "DEGRADED",
-        "last_training_run": model_state.last_training_run or {
-            "status": "NO_TRAINING_YET"
-        },
+        "last_training_run": model_state.last_training_run or {"status": "NO_TRAINING_YET"},
         "active_models": {
             "als_model": {
                 "status": "loaded" if model_state.als_model else "unavailable",
@@ -343,19 +335,13 @@ async def get_metrics():
         }
     }
 
-
 @app.get("/health")
 async def health_check():
-    """
-    API 6.3.1: Health check for Load Balancer
-    """
+    """Health check for Eureka and Load Balancer"""
     if not model_state.models_loaded:
         return JSONResponse(
             status_code=503,
-            content={
-                "status": "UNHEALTHY",
-                "error": "Models not loaded or initializing"
-            }
+            content={"status": "UNHEALTHY", "error": "Models not loaded"}
         )
     
     models_loaded = []
@@ -366,36 +352,28 @@ async def health_check():
     
     return {
         "status": "HEALTHY",
-        "models_loaded": models_loaded
+        "models_loaded": models_loaded,
+        "eureka_registered": True
     }
-
-# ROOT ENDPOINT
 
 @app.get("/")
 async def root():
-    """Root endpoint with service info"""
+    """Service info and available endpoints"""
     return {
         "service": "Recommend Service",
         "version": "1.0.0",
         "status": "online" if model_state.models_loaded else "initializing",
+        "eureka_registered": True,
         "endpoints": {
             "homepage": "/recommend/homepage",
             "product_detail": "/recommend/product-detail/{product_id}",
             "training": "/train",
             "metrics": "/admin/metrics",
-            "health": "/health"
-        },
-        "documentation": "/docs"
+            "health": "/health",
+            "docs": "/docs"
+        }
     }
-
-# RUN SERVER
 
 if __name__ == "__main__":
     import uvicorn
-    
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        log_level="info"
-    )
+    uvicorn.run(app, host="0.0.0.0", port=8888, log_level="info")
