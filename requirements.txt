@@ -26,3 +26,6 @@ uvicorn[standard]==0.24.0
 # Database 
 sqlalchemy==2.0.23
 mysqlclient==2.2.0
+
+# Service Discovery - Eureka Client
+py-eureka-client==0.11.11

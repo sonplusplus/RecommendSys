@@ -54,39 +54,36 @@ async def startup():
     try:
         logger.info("Starting Recommend Service...")
         
-        # Register with Eureka Server
+        # Get host info
         hostname = socket.gethostname()
         ip_address = socket.gethostbyname(hostname)
         
         logger.info(f"Registering with Eureka at {ip_address}:8888")
         
-        eureka_client.init(
-            eureka_server="http://localhost:8761/eureka",
-            app_name="RECOMMEND-SERVICE",
+        # Register with Eureka Server - FIXED PARAMETERS
+        await eureka_client.init_async(
+            eureka_server="http://localhost:8761/eureka/",
+            app_name="recommend-service",  # Tên service cho Feign Client
             instance_port=8888,
             instance_ip=ip_address,
             instance_host=hostname,
-            metadata={
-                "version": "1.0.0",
-                "profile": "production",
-                "ml_models": "ALS+PhoBERT"
-            },
+            # Health check endpoint
             health_check_url=f"http://{ip_address}:8888/health",
             status_page_url=f"http://{ip_address}:8888/admin/metrics",
-            lease_renewal_interval_in_secs=30,  # Heartbeat interval
-            lease_duration_in_secs=90,  # Timeout before removal
-            status="UP"
+            # Heartbeat config (tên tham số đúng)
+            renewal_interval_in_secs=30,  # Heartbeat interval
+            duration_in_secs=90,  # Lease duration
         )
         
-        logger.info("Successfully registered with Eureka")
+        logger.info("✓ Successfully registered with Eureka")
         
         # Load ALS model (Collaborative Filtering)
         try:
             model_state.als_model = AlternatingLeastSquares.load("models/als_model.pkl")
-            logger.info(f"ALS loaded: {len(model_state.als_model.user_map)} users, "
+            logger.info(f"✓ ALS loaded: {len(model_state.als_model.user_map)} users, "
                        f"{len(model_state.als_model.item_map)} items")
         except FileNotFoundError:
-            logger.warning("ALS model not found - Collaborative filtering disabled")
+            logger.warning("⚠ ALS model not found - Collaborative filtering disabled")
         
         # Load PhoBERT embeddings (Content-based)
         try:
@@ -94,16 +91,26 @@ async def startup():
                 data = pickle.load(f)
             model_state.phobert_embeddings = data['embeddings']
             model_state.product_ids = data['product_ids']
-            logger.info(f"PhoBERT loaded: {len(model_state.product_ids)} products")
+            logger.info(f"✓ PhoBERT loaded: {len(model_state.product_ids)} products")
         except FileNotFoundError:
-            logger.warning("PhoBERT embeddings not found - Content-based disabled")
+            logger.warning("⚠ PhoBERT embeddings not found - Content-based disabled")
         
         model_state.models_loaded = bool(model_state.als_model or model_state.phobert_embeddings is not None)
-        logger.info(f"Service ready: {model_state.models_loaded}")
+        logger.info(f"✓ Service ready: Models loaded = {model_state.models_loaded}")
             
     except Exception as e:
-        logger.error(f"Startup error: {e}")
+        logger.error(f"✗ Startup error: {e}", exc_info=True)
         raise
+
+@app.on_event("shutdown")
+async def shutdown():
+    """Graceful shutdown - deregister from Eureka"""
+    try:
+        logger.info("Shutting down, deregistering from Eureka...")
+        await eureka_client.stop_async()
+        logger.info("✓ Deregistered from Eureka")
+    except Exception as e:
+        logger.error(f"Shutdown error: {e}")
 
 # ============================================
 # HELPER FUNCTIONS
@@ -193,17 +200,24 @@ def get_popular_fallback(top_k: int = 10) -> List[str]:
     return [item_id for item_id, _ in sorted_items[:top_k]]
 
 # ============================================
-# RECOMMENDATION ENDPOINTS
+# RECOMMENDATION ENDPOINTS - INTERNAL API
 # ============================================
-@app.get("/recommend/homepage")
+@app.get("/api/v1/internal/recommend/homepage")
 async def recommend_homepage(
     user_id: Optional[str] = Query(None, description="User ID for personalization"),
     top_k: int = Query(10, ge=1, le=50)
-) -> List[str]:
+) -> Dict:
     """
     Homepage recommendations:
     - Logged-in users: Personalized via ALS
     - Guest users: Popular items fallback
+    
+    Response format for Feign Client:
+    {
+        "product_ids": ["123", "456", ...],
+        "strategy": "personalized" | "popular",
+        "count": 10
+    }
     """
     if not model_state.models_loaded:
         raise HTTPException(status_code=503, detail="Models not loaded")
@@ -213,23 +227,39 @@ async def recommend_homepage(
         try:
             recs = get_collaborative_recommendations(user_id, top_k)
             if recs:
-                return recs
+                return {
+                    "product_ids": recs,
+                    "strategy": "personalized",
+                    "count": len(recs)
+                }
         except Exception as e:
             logger.warning(f"Collaborative failed for user {user_id}: {e}")
     
     # Fallback to popular items
-    return get_popular_fallback(top_k)
+    popular_items = get_popular_fallback(top_k)
+    return {
+        "product_ids": popular_items,
+        "strategy": "popular",
+        "count": len(popular_items)
+    }
 
-@app.get("/recommend/product-detail/{product_id}")
+@app.get("/api/v1/internal/recommend/product-detail/{product_id}")
 async def recommend_product_detail(
     product_id: str,
     user_id: Optional[str] = Query(None, description="User ID for hybrid strategy"),
     top_k: int = Query(10, ge=1, le=50)
-) -> List[str]:
+) -> Dict:
     """
     Product detail recommendations:
     - Guest: 100% Content-based (PhoBERT)
     - Logged-in: Hybrid (60% Content + 40% Collaborative)
+    
+    Response format for Feign Client:
+    {
+        "product_ids": ["789", "101", ...],
+        "strategy": "content-based" | "hybrid",
+        "count": 10
+    }
     """
     if not model_state.models_loaded:
         raise HTTPException(status_code=503, detail="Models not loaded")
@@ -244,17 +274,30 @@ async def recommend_product_detail(
     
     # Guest users: content-based only
     if not user_id:
-        return content_recs
+        return {
+            "product_ids": content_recs,
+            "strategy": "content-based",
+            "count": len(content_recs)
+        }
     
     # Logged-in users: hybrid strategy
     try:
         collab_recs = get_similar_items_collaborative(product_id, top_k=top_k)
         if collab_recs:
-            return hybrid_merge(content_recs, collab_recs, content_weight=0.6, top_k=top_k)
+            hybrid_recs = hybrid_merge(content_recs, collab_recs, content_weight=0.6, top_k=top_k)
+            return {
+                "product_ids": hybrid_recs,
+                "strategy": "hybrid",
+                "count": len(hybrid_recs)
+            }
     except Exception as e:
         logger.warning(f"Collaborative failed: {e}")
     
-    return content_recs
+    return {
+        "product_ids": content_recs,
+        "strategy": "content-based",
+        "count": len(content_recs)
+    }
 
 # ============================================
 # ADMIN ENDPOINTS
@@ -270,7 +313,7 @@ async def trigger_training(request: TrainingRequest, background_tasks: Backgroun
     if model_state.current_training_job:
         raise HTTPException(
             status_code=409,
-            detail={"error": "Training already running", "job_id": model_state.current_training_job}
+            content={"error": "Training already running", "job_id": model_state.current_training_job}
         )
     
     job_id = str(uuid.uuid4())
@@ -365,8 +408,8 @@ async def root():
         "status": "online" if model_state.models_loaded else "initializing",
         "eureka_registered": True,
         "endpoints": {
-            "homepage": "/recommend/homepage",
-            "product_detail": "/recommend/product-detail/{product_id}",
+            "homepage": "/api/v1/internal/recommend/homepage",
+            "product_detail": "/api/v1/internal/recommend/product-detail/{product_id}",
             "training": "/train",
             "metrics": "/admin/metrics",
             "health": "/health",

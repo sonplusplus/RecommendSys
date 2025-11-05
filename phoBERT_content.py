@@ -5,12 +5,16 @@ from transformers import AutoModel, AutoTokenizer
 from sklearn.metrics.pairwise import cosine_similarity
 import pickle
 from tqdm import tqdm
+import os
+
 
 # Config
 PRODUCTS_CSV = "data/products.csv"
-OUTPUT_PATH = "data/phobert_embeddings.pkl"
+OUTPUT_PATH = "models/phobert_embeddings.pkl"
 MODEL_NAME = "vinai/phobert-base"
 BATCH_SIZE = 16  
+
+os.makedirs("models ", exist_ok=True)
 
 class PhoBERTContentModel:
     def __init__(self, model_name=MODEL_NAME):
