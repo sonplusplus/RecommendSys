@@ -18,10 +18,9 @@ recommend-service/
 │   └── phobert_embeddings.pkl # PhoBERT content vectors
 ├── data/                      # Training datasets
 │   ├── interactions.csv       # User-item interactions (weight: 1-3)
-│   ├── products.csv          # Product metadata
-│   ├── train_interactions.csv
-│   └── test_interactions.csv
-├── when_need/                 # Utility scripts
+│   └── products.csv          # Product metadata
+│
+├── when_need/                
 │   ├── check_gpu.py          # GPU availability check
 │   ├── check_occur.py        # Co-occurrence analysis
 │   └── length_of_text.py     # Text length statistics
