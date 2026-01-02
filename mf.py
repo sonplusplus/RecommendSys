@@ -255,7 +255,7 @@ def evaluate_item_similarity(model, test_df, k=10):
 def train_als_model():
     """Main training pipeline"""
     print("Loading data...")
-    dataset, _, _, _, _, _, _, _ = load_tf_data()
+    dataset, _, _, _, _, _, _ = load_tf_data()
     
     if dataset is None:
         print("Failed to load data")

@@ -30,7 +30,6 @@ def load_tf_data():
             query = """SELECT
             CAST(o.user_id AS CHAR) AS user_id,
             CAST(oi.product_id AS CHAR) AS product_id,
-            oi.price,
             p.category,
             CASE 
                 WHEN o.status = 'completed' THEN 3
@@ -45,10 +44,10 @@ def load_tf_data():
             print("Load data from SQL with weights")
         except exc.SQLAlchemyError as e:
             print(f"Error load SQL: {e}")
-            return None, None, None, None, None, None, None, None
+            return None, None, None, None, None, None, None
         except Exception as e:
             print(f"Error: {e}")
-            return None, None, None, None, None, None, None, None
+            return None, None, None, None, None, None, None
 
     # CSV
     else:
@@ -87,10 +86,10 @@ def load_tf_data():
             
         except FileNotFoundError as e:
             print(f"CSV file not found: {e}")
-            return None, None, None, None, None, None, None, None
+            return None, None, None, None, None, None, None
         except Exception as e:
             print(f"Error loading data from CSV: {e}")
-            return None, None, None, None, None, None, None, None
+            return None, None, None, None, None, None, None
 
     # Preprocess data
     unique_user_ids = df.user_id.unique()
@@ -102,17 +101,17 @@ def load_tf_data():
     dataset = tf.data.Dataset.from_tensor_slices(dataset_dict)
     
     weights = df['weight'].values
+    descriptions = df['description'].values
 
-    return dataset, unique_user_ids, unique_product_ids, unique_categories, unique_brands, df['price'].values, df['description'].values, weights
+    return dataset, unique_user_ids, unique_product_ids, unique_categories, unique_brands, descriptions, weights
 
 
 
 if __name__ == "__main__":
-    dataset, users, products, categories, brands, prices, descriptions, weights = load_tf_data()
+    dataset, users, products, categories, brands, descriptions, weights = load_tf_data()
     if dataset is not None:
         print(f"Số user: {len(users):,}")
         print(f"Số sản phẩm: {len(products):,}")
         print(f"Số loại category: {len(categories):,}")
         print(f"Số loại brand: {len(brands):,}")
-        print(f"Sample price: {prices[:5]}")
         print(f"Sample description: {descriptions[0][:100]}...")
