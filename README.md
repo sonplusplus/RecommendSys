@@ -35,7 +35,7 @@ recommend-service/
 └── README.md
 ```
 
-## 🚀 Cài đặt
+## Cài đặt
 
 ### 1. Yêu cầu hệ thống
 - Python 3.8+
