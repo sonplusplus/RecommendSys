@@ -2,34 +2,34 @@
 
 Hệ thống gợi ý sản phẩm sử dụng kỹ thuật Hybrid kết hợp **Collaborative Filtering (ALS)** và **Content-Based (PhoBERT)** cho nền tảng thương mại điện tử.
 
-## 🎯 Tổng quan
+## Tổng quan
 
 Hệ thống cung cấp 2 loại gợi ý chính:
 - **Homepage**: Gợi ý cá nhân hóa dựa trên lịch sử người dùng (ALS)
 - **Product Detail**: Gợi ý sản phẩm tương tự (Hybrid: 60% Content + 40% Collaborative)
 
 
-## 📁 Cấu trúc thư mục
+## 📁Cấu trúc thư mục
 
 ```
 recommend-service/
-├── models/                     # Trained ML models
-│   ├── als_model.pkl          # ALS collaborative filtering
-│   └── phobert_embeddings.pkl # PhoBERT content vectors
-├── data/                      # Training datasets
-│   ├── interactions.csv       # User-item interactions (weight: 1-3)
-│   └── products.csv          # Product metadata
+├── models/                     
+│   ├── als_model.pkl          
+│   └── phobert_embeddings.pkl 
+├── data/                      
+│   ├── interactions.csv       
+│   └── products.csv          
 │
 ├── when_need/                
-│   ├── check_gpu.py          # GPU availability check
-│   ├── check_occur.py        # Co-occurrence analysis
-│   └── length_of_text.py     # Text length statistics
-├── load_data.py              # Data loading utilities
-├── mf.py                     # ALS implementation
-├── phoBERT_content.py        # PhoBERT embedding generation
-├── eval.py                   # Model evaluation
-├── evaluator.py              # Evaluation metrics
-├── api.py                    # FastAPI service (Eureka-enabled)
+│   ├── check_gpu.py          
+│   ├── check_occur.py        
+│   └── length_of_text.py     
+├── load_data.py              
+├── mf.py                     
+├── phoBERT_content.py        
+├── eval.py                   
+├── evaluator.py              
+├── api.py                    
 ├── requirements.txt
 ├── .gitignore
 └── README.md
@@ -61,9 +61,8 @@ pip install -r requirements.txt
 python when_need/check_gpu.py
 ```
 
-## 📊 Chuẩn bị dữ liệu
+## Chuẩn bị dữ liệu
 
-### Format file CSV
 
 **interactions.csv**:
 ```csv
@@ -85,10 +84,6 @@ prod_123,iPhone 15,Smartphone,Apple,Điện thoại thông minh...
 python when_need/length_of_text.py
 ```
 
-Điều chỉnh `max_length` trong PhoBERT:
-- 95th percentile < 256 → dùng `max_length=256`
-- 95th percentile > 256 → tăng lên 384 hoặc 512
-
 ## 🔧 Training Models
 
 ### 1. Train ALS Model (Collaborative Filtering)
@@ -100,15 +95,13 @@ python mf.py
 **Hyperparameters** (trong `mf.py`):
 ```python
 AlternatingLeastSquares(
-    n_factors=50,        # Số chiều latent vectors (50-100)
-    n_iterations=15,     # Số epoch (10-20)
-    reg_param=0.01,      # L2 regularization (0.001-0.1)
-    alpha=40            # Confidence scaling (10-50)
+    n_factors=50,        
+    n_iterations=15,     
+    reg_param=0.01,      
+    alpha=40            
 )
 ```
-
-**Output**: `models/als_model.pkl` (~50-200MB tùy dataset size)
-
+**Output**: `models/als_model.pkl`
 ### 2. Generate PhoBERT Embeddings (Content-Based)
 
 ```bash
@@ -200,33 +193,6 @@ curl -X POST "http://localhost:8888/train" \
   -d '{"force_retrain_all": false}'
 ```
 
-## 📈 Monitoring & Tuning
-
-### ALS Hyperparameter Tuning
-
-**Triệu chứng**: Hit Rate thấp (<30%)
-- ✅ Tăng `alpha=60` (tăng confidence weighting)
-- ✅ Tăng `n_factors=100` (tăng capacity)
-- ✅ Thu thập thêm dữ liệu interaction
-
-**Triệu chứng**: Coverage thấp (<10%)
-- ✅ Giảm `reg_param=0.001` (giảm regularization)
-- ✅ Tăng diversity trong loss function
-
-**Triệu chứng**: Training chậm
-- ✅ Giảm `n_iterations=10`
-- ✅ Sử dụng sparse matrix operations (đã implement)
-
-### PhoBERT Optimization
-
-**Memory issues**:
-- ✅ Giảm `BATCH_SIZE=8` (trong `phoBERT_content.py`)
-- ✅ Giảm `max_length=128` nếu text ngắn
-
-**Similarity không tốt**:
-- ✅ Kiểm tra text preprocessing (xem `when_need/length_of_text.py`)
-- ✅ Thử model khác: `vinai/phobert-large` (chậm hơn nhưng chính xác hơn)
-
 ### Co-occurrence Analysis
 
 Kiểm tra xem ALS có học được patterns không:
@@ -237,9 +203,9 @@ python when_need/check_occur.py
 
 Nếu "NO OVERLAP" nhiều → cần thêm dữ liệu hoặc giảm sparsity.
 
-## 🔒 Production Deployment
+## Production Deployment
 
-### 1. Docker (recommended)
+### 1. Docker
 
 ```dockerfile
 FROM python:3.9-slim
@@ -272,18 +238,7 @@ API tự động register với Eureka Server:
 - Timeout 90s trước khi bị remove
 - Health check endpoint: `/health`
 
-### 4. Hot-swapping Models
-
-```bash
-# Train models mới
-python mf.py
-python phoBERT_content.py
-
-# API tự động reload sau khi training xong (via /train endpoint)
-# Không cần restart service
-```
-
-## 🐛 Troubleshooting
+##  Troubleshooting
 
 ### Issue: "Models not loaded"
 ```bash
