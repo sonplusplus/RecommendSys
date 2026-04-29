@@ -1,4 +1,4 @@
-# DOCKER VOLUME DATA PERSISTENCE
+
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Header
@@ -19,7 +19,6 @@ import pandas as pd
 from mf import AlternatingLeastSquares
 import py_eureka_client.eureka_client as eureka_client
 
-# LOGGING CONFIGURATION
 
 logging.basicConfig(
     level=logging.INFO,
@@ -87,9 +86,7 @@ class RecommendationResponse(BaseModel):
     strategy: str
     count: int
 
-# ============================================
-# GLOBAL STATE
-# ============================================
+
 class ModelState:
     """Manages ML models and training state"""
     def __init__(self):
@@ -119,9 +116,6 @@ class ModelState:
 
 model_state = ModelState()
 
-# ============================================
-# FASTAPI APP INITIALIZATION
-# ============================================
 app = FastAPI(
     title="Recommend Service",
     description="Hybrid Recommendation System API (ALS + PhoBERT)",
@@ -130,9 +124,7 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# ============================================
-# HTTP CLIENT WITH RETRY LOGIC
-# ============================================
+
 class HttpClient:
     """Async HTTP client with retry logic"""
 
@@ -182,37 +174,32 @@ class HttpClient:
 
 http_client = HttpClient()
 
-# ============================================
-# DATA LOADING & MERGING STRATEGY
-# ============================================
+
 
 async def fetch_and_merge_all_data() -> tuple[List[ProductData], List[InteractionData]]:
     """
     STRATEGY: LUÔN KẾT HỢP 3 NGUỒN DATA
     
-    1. BASE CSV (data giả lập - luôn load)
-    2. ACCUMULATED CSV (data từ lần train trước)
-    3. API DATA (data mới từ Postman test)
+    1. base csv (data giả lập - luôn load)
+    2. accumulate csv (data từ lần train trước)
+    3. api data (data mới từ Postman test)
     
     Returns:
         Tuple of (merged_products, merged_interactions)
     """
-    logger.info("=" * 70)
-    logger.info("📊 LOADING DATA FROM ALL SOURCES")
-    logger.info("=" * 70)
+    logger.info("LOADING DATA FROM ALL SOURCES")
+    logger.info("=" * 10)
 
     all_interactions = []
     all_products = []
 
-    # ============================================
-    # SOURCE 1: BASE CSV (Data giả lập - LUÔN LOAD)
-    # ============================================
+    #src 1: simulate base data
     base_interactions_count = 0
     base_products_count = 0
     
     if config.BASE_INTERACTIONS_CSV.exists():
         try:
-            logger.info(f"📂 Loading BASE interactions from: {config.BASE_INTERACTIONS_CSV}")
+            logger.info(f"Loading BASE interactions from: {config.BASE_INTERACTIONS_CSV}")
             base_df = pd.read_csv(config.BASE_INTERACTIONS_CSV)
             
             for _, row in base_df.iterrows():
@@ -224,18 +211,18 @@ async def fetch_and_merge_all_data() -> tuple[List[ProductData], List[Interactio
                 ))
             
             base_interactions_count = len(all_interactions)
-            logger.info(f"✅ Loaded {base_interactions_count} BASE interactions (giả lập)")
+            logger.info(f"Loaded {base_interactions_count} BASE interactions (giả lập)")
             
         except Exception as e:
-            logger.error(f"❌ Failed to load BASE interactions: {e}")
-            logger.warning("⚠️  Training will continue with API data only")
+            logger.error(f"Failed to load BASE interactions: {e}")
+            logger.warning("Training will continue with API data only")
     else:
-        logger.warning(f"⚠️  BASE interactions not found at {config.BASE_INTERACTIONS_CSV}")
-        logger.warning("⚠️  Make sure to mount CSV files to /app/data volume")
+        logger.warning(f"BASE interactions not found at {config.BASE_INTERACTIONS_CSV}")
+        logger.warning("Make sure to mount CSV files to /app/data volume")
 
     if config.BASE_PRODUCTS_CSV.exists():
         try:
-            logger.info(f"📂 Loading BASE products from: {config.BASE_PRODUCTS_CSV}")
+            logger.info(f"Loading BASE products from: {config.BASE_PRODUCTS_CSV}")
             base_prod_df = pd.read_csv(config.BASE_PRODUCTS_CSV)
             
             for _, row in base_prod_df.iterrows():
@@ -248,22 +235,20 @@ async def fetch_and_merge_all_data() -> tuple[List[ProductData], List[Interactio
                 ))
             
             base_products_count = len(all_products)
-            logger.info(f"✅ Loaded {base_products_count} BASE products (giả lập)")
+            logger.info(f"Loaded {base_products_count} BASE products (giả lập)")
             
         except Exception as e:
-            logger.error(f"❌ Failed to load BASE products: {e}")
+            logger.error(f"Failed to load BASE products: {e}")
     else:
-        logger.warning(f"⚠️  BASE products not found at {config.BASE_PRODUCTS_CSV}")
+        logger.warning(f"BASE products not found at {config.BASE_PRODUCTS_CSV}")
 
-    # ============================================
-    # SOURCE 2: ACCUMULATED DATA (từ lần train trước)
-    # ============================================
+    #src 2: data từ before train
     accumulated_interactions_count = 0
     accumulated_products_count = 0
     
     if config.ACCUMULATED_INTERACTIONS_CSV.exists():
         try:
-            logger.info(f"📂 Loading ACCUMULATED interactions from previous runs")
+            logger.info(f"Loading ACCUMULATED interactions from previous runs")
             acc_df = pd.read_csv(config.ACCUMULATED_INTERACTIONS_CSV)
             
             for _, row in acc_df.iterrows():
@@ -275,14 +260,14 @@ async def fetch_and_merge_all_data() -> tuple[List[ProductData], List[Interactio
                 ))
             
             accumulated_interactions_count = len(all_interactions) - base_interactions_count
-            logger.info(f"✅ Loaded {accumulated_interactions_count} ACCUMULATED interactions")
+            logger.info(f"Loaded {accumulated_interactions_count} ACCUMULATED interactions")
             
         except Exception as e:
             logger.warning(f"Could not load accumulated interactions: {e}")
 
     if config.ACCUMULATED_PRODUCTS_CSV.exists():
         try:
-            logger.info(f"📂 Loading ACCUMULATED products from previous runs")
+            logger.info(f"Loading ACCUMULATED products from previous runs")
             acc_prod_df = pd.read_csv(config.ACCUMULATED_PRODUCTS_CSV)
             
             for _, row in acc_prod_df.iterrows():
@@ -295,48 +280,41 @@ async def fetch_and_merge_all_data() -> tuple[List[ProductData], List[Interactio
                 ))
             
             accumulated_products_count = len(all_products) - base_products_count
-            logger.info(f"✅ Loaded {accumulated_products_count} ACCUMULATED products")
+            logger.info(f"Loaded {accumulated_products_count} ACCUMULATED products")
             
         except Exception as e:
             logger.warning(f"Could not load accumulated products: {e}")
 
-    # ============================================
-    # SOURCE 3: API DATA (data mới từ Postman)
-    # ============================================
+    # src 3
     api_interactions_count = 0
     api_products_count = 0
     
     try:
-        # Fetch products from Product Service
         product_url = f"{config.PRODUCT_SERVICE_URL}{config.PRODUCT_EXPORT_ENDPOINT}"
-        logger.info(f"🌐 Fetching NEW products from API: {product_url}")
+        logger.info(f"Fetching NEW products from API: {product_url}")
         products_raw = await http_client.fetch_with_retry(product_url)
         
         api_products = [ProductData(**p) for p in products_raw]
         all_products.extend(api_products)
         api_products_count = len(api_products)
-        logger.info(f"✅ Fetched {api_products_count} products from API")
+        logger.info(f"Fetched {api_products_count} products from API")
 
-        # Fetch interactions from Admin Service
         interaction_url = f"{config.ADMIN_SERVICE_URL}{config.INTERACTION_EXPORT_ENDPOINT}"
-        logger.info(f"🌐 Fetching NEW interactions from API: {interaction_url}")
+        logger.info(f"Fetching NEW interactions from API: {interaction_url}")
         interactions_raw = await http_client.fetch_with_retry(interaction_url)
         
         api_interactions = [InteractionData(**i) for i in interactions_raw]
         all_interactions.extend(api_interactions)
         api_interactions_count = len(api_interactions)
-        logger.info(f"✅ Fetched {api_interactions_count} interactions from API")
+        logger.info(f"Fetched {api_interactions_count} interactions from API")
 
     except Exception as e:
-        logger.error(f"❌ Failed to fetch from API: {e}")
-        logger.warning("⚠️  Training will continue with CSV data only")
+        logger.error(f"Failed to fetch from API: {e}")
+        logger.warning("Training will continue with CSV data only")
 
-    # ============================================
-    # MERGE & DEDUPLICATE
-    # ============================================
-    logger.info("=" * 70)
-    logger.info("🔄 MERGING & DEDUPLICATING DATA")
-    logger.info("=" * 70)
+
+    logger.info("MERGING & DEDUPLICATING DATA")
+    logger.info("=" * 10)
 
     # Deduplicate products (keep latest by product_id)
     products_dict = {}
@@ -355,32 +333,27 @@ async def fetch_and_merge_all_data() -> tuple[List[ProductData], List[Interactio
     
     merged_interactions = list(interactions_dict.values())
 
-    # ============================================
-    # SUMMARY
-    # ============================================
-    logger.info("=" * 70)
-    logger.info("📊 DATA MERGE SUMMARY")
-    logger.info("=" * 70)
-    logger.info(f"SOURCE 1 - BASE CSV (giả lập):")
+ 
+    logger.info("DATA MERGE SUMMARY")
+    logger.info("=" * 10)
+    logger.info(f"source 1 - base CSV (giả lập):")
     logger.info(f"  └─ Interactions: {base_interactions_count:,}")
     logger.info(f"  └─ Products: {base_products_count:,}")
     logger.info(f"")
-    logger.info(f"SOURCE 2 - ACCUMULATED (từ lần trước):")
-    logger.info(f"  └─ Interactions: {accumulated_interactions_count:,}")
-    logger.info(f"  └─ Products: {accumulated_products_count:,}")
+    logger.info(f"source 2 - accumulated (từ lần trước):")
+    logger.info(f"Interactions: {accumulated_interactions_count:,}")
+    logger.info(f"Products: {accumulated_products_count:,}")
     logger.info(f"")
-    logger.info(f"SOURCE 3 - API (mới từ Postman):")
-    logger.info(f"  └─ Interactions: {api_interactions_count:,}")
-    logger.info(f"  └─ Products: {api_products_count:,}")
+    logger.info(f"source 3 - API (từ Postman):")
+    logger.info(f"Interactions: {api_interactions_count:,}")
+    logger.info(f"Products: {api_products_count:,}")
     logger.info(f"")
-    logger.info(f"📊 FINAL MERGED DATA (after deduplication):")
-    logger.info(f"  └─ Total Interactions: {len(merged_interactions):,}")
-    logger.info(f"  └─ Total Products: {len(merged_products):,}")
-    logger.info(f"  └─ Unique Users: {len(set(i.user_id for i in merged_interactions)):,}")
-    logger.info("=" * 70)
+    logger.info(f"FINAL MERGED DATA (after deduplication):")
+    logger.info(f"Total Interactions: {len(merged_interactions):,}")
+    logger.info(f"Total Products: {len(merged_products):,}")
+    logger.info(f"Unique Users: {len(set(i.user_id for i in merged_interactions)):,}")
+    logger.info("=" * 10)
 
-    # ✅ SAVE ACCUMULATED DATA (CHỈ LƯU API DATA MỚI - KHÔNG LƯU BASE)
-    # Để lần sau không bị duplicate BASE data
     save_accumulated_data(api_interactions, api_products)
 
     return merged_products, merged_interactions
@@ -430,7 +403,7 @@ def save_accumulated_data(api_interactions: List[InteractionData], api_products:
             for i in interactions_dict.values()
         ])
         interactions_df.to_csv(config.ACCUMULATED_INTERACTIONS_CSV, index=False)
-        logger.info(f"✅ Saved {len(interactions_df)} accumulated interactions to {config.ACCUMULATED_INTERACTIONS_CSV}")
+        logger.info(f"Saved {len(interactions_df)} accumulated interactions to {config.ACCUMULATED_INTERACTIONS_CSV}")
         
         # Similar for products
         existing_products = []
@@ -463,16 +436,10 @@ def save_accumulated_data(api_interactions: List[InteractionData], api_products:
             for p in products_dict.values()
         ])
         products_df.to_csv(config.ACCUMULATED_PRODUCTS_CSV, index=False)
-        logger.info(f"✅ Saved {len(products_df)} accumulated products to {config.ACCUMULATED_PRODUCTS_CSV}")
+        logger.info(f"Saved {len(products_df)} accumulated products to {config.ACCUMULATED_PRODUCTS_CSV}")
         
     except Exception as e:
-        logger.error(f"❌ Failed to save accumulated data: {e}")
-
-
-
-# SIMPLIFIED TRAINING PIPELINE
-
-
+        logger.error(f"Failed to save accumulated data: {e}")
 
 
 async def run_training_pipeline(job_id: str, request: TrainingRequest):
@@ -483,15 +450,13 @@ async def run_training_pipeline(job_id: str, request: TrainingRequest):
     logger.info("=" * 70)
 
     try:
-        # ✅ LOAD ALL DATA
         products, interactions = await fetch_and_merge_all_data()
 
         if len(products) == 0:
-            raise ValueError("❌ No products available")
+            raise ValueError("No products available")
         if len(interactions) == 0:
-            raise ValueError("❌ No interactions available")
+            raise ValueError("No interactions available")
 
-        # Tách lại 3 nguồn để analyze
         base_interactions = [i for i in interactions if i.type == 'BASE']
         accumulated_interactions = [i for i in interactions if i.type == 'ACCUMULATED']
         api_interactions = [i for i in interactions if i.type == 'API']
@@ -502,41 +467,36 @@ async def run_training_pipeline(job_id: str, request: TrainingRequest):
             api_interactions
         )
         
-        logger.info("=" * 70)
-        logger.info("📊 DATASET SIZE ANALYSIS")
-        logger.info("=" * 70)
-        logger.info(f"BASE data:        {analysis['base_size']:,} interactions")
-        logger.info(f"ACCUMULATED data: {analysis['accumulated_size']:,} interactions")
-        logger.info(f"API data (new):   {analysis['api_size']:,} interactions")
-        logger.info(f"TOTAL:            {analysis['total_size']:,} interactions")
+        logger.info("DATASET SIZE ANALYSIS")
+        logger.info("=" * 10)
+        logger.info(f"base data:        {analysis['base_size']:,} interactions")
+        logger.info(f"accumulated data: {analysis['accumulated_size']:,} interactions")
+        logger.info(f"API data:         {analysis['api_size']:,} interactions")
+        logger.info(f"total:            {analysis['total_size']:,} interactions")
         logger.info("")
-        logger.info(f"🎯 RECOMMENDED STRATEGY: {analysis['recommended_strategy'].upper()}")
-        logger.info(f"📝 Reason: {analysis['reason']}")
-        logger.info("=" * 70)
+        logger.info(f"recommended strategy: {analysis['recommended_strategy'].upper()}")
+        logger.info(f"reason: {analysis['reason']}")
+        logger.info("=" * 10)
 
 
         strategy = analysis['recommended_strategy']
         
         if request.force_retrain_all:
             strategy = 'full_retrain'
-            logger.info("⚠️  User forced FULL RETRAIN (override auto-decision)")
+            logger.info("User forced FULL RETRAIN (override auto-decision)")
 
-  
-        logger.info("=" * 70)
-        logger.info(f"🤖 TRAINING ALS MODEL - Strategy: {strategy.upper()}")
-        logger.info("=" * 70)
+        logger.info(f" TRAINING ALS MODEL, Strategy: {strategy.upper()}")
+        logger.info("=" * 10)
         
         loop = asyncio.get_event_loop()
         old_model = None
         
         if strategy == 'skip':
-            # Giữ nguyên model hiện tại
-            logger.info("⏭️  Skipping training - API data too small")
+            logger.info("Skip training - API data too small")
             new_als_model = model_state.als_model
             training_skipped = True
         
         elif strategy == 'full_retrain':
-            # Full retrain từ đầu
             new_als_model = await loop.run_in_executor(
                 None, 
                 train_als_model, 
@@ -545,11 +505,10 @@ async def run_training_pipeline(job_id: str, request: TrainingRequest):
             training_skipped = False
         
         elif strategy == 'warmstart':
-            # Warmstart từ model cũ
             if config.ALS_MODEL_PATH.exists():
                 try:
                     old_model = AlternatingLeastSquares.load(str(config.ALS_MODEL_PATH))
-                    logger.info(f"✅ Loaded old model for warmstart")
+                    logger.info(f"Loaded old model for warmstart")
                 except Exception as e:
                     logger.warning(f"Could not load old model: {e}. Fallback to full retrain.")
                     old_model = None
@@ -570,8 +529,7 @@ async def run_training_pipeline(job_id: str, request: TrainingRequest):
             training_skipped = False
         
         elif strategy == 'incremental':
-            # Incremental learning (future implementation)
-            logger.warning("⚠️  Incremental learning chưa implement. Fallback to warmstart.")
+            logger.warning("Incremental learning chưa implement, fallback to warmstart.")
             
             if config.ALS_MODEL_PATH.exists():
                 old_model = AlternatingLeastSquares.load(str(config.ALS_MODEL_PATH))
@@ -590,23 +548,23 @@ async def run_training_pipeline(job_id: str, request: TrainingRequest):
         should_retrain_phobert = request.force_retrain_all or not config.PHOBERT_EMBEDDINGS_PATH.exists()
         
         if should_retrain_phobert:
-            logger.info("🤖 GENERATING PHOBERT EMBEDDINGS")
+            logger.info("gen new phobert embeddings (no existing embeddings or forced retrain)")
             new_embeddings, new_product_ids = await loop.run_in_executor(
                 None, 
                 generate_phobert_embeddings, 
                 products
             )
         else:
-            logger.info("📂 Reusing existing PhoBERT embeddings")
+            logger.info("reusing existing PhoBERT embeddings")
             with open(config.PHOBERT_EMBEDDINGS_PATH, 'rb') as f:
                 data = pickle.load(f)
             new_embeddings = data['embeddings']
             new_product_ids = data['product_ids']
 
         if not training_skipped:
-            logger.info("💾 SAVING MODELS")
+            logger.info("SAVING MODELS")
             new_als_model.save(str(config.ALS_MODEL_PATH))
-            logger.info(f"✅ ALS model saved")
+            logger.info(f"ALS model saved")
         
         with open(config.PHOBERT_EMBEDDINGS_PATH, 'wb') as f:
             pickle.dump({
@@ -618,7 +576,7 @@ async def run_training_pipeline(job_id: str, request: TrainingRequest):
                 'created_at': datetime.utcnow().isoformat() + "Z"
             }, f)
 
-        # ✅ HOT-SWAP
+        # hot-swap
         await model_state.update_models(
             new_als_model=new_als_model,
             new_phobert_embeddings=new_embeddings,
@@ -633,8 +591,8 @@ async def run_training_pipeline(job_id: str, request: TrainingRequest):
             "completed_at": end_time.isoformat() + "Z",
             "status": "COMPLETED_SUCCESS",
             "duration_seconds": duration,
-            "strategy": strategy,  # 🆕
-            "dataset_analysis": analysis,  # 🆕
+            "strategy": strategy,  
+            "dataset_analysis": analysis,  
             "metrics": {
                 "total_products": len(products),
                 "total_interactions": len(interactions),
@@ -645,18 +603,17 @@ async def run_training_pipeline(job_id: str, request: TrainingRequest):
                 "als_users": len(new_als_model.user_map),
                 "als_items": len(new_als_model.item_map),
                 "phobert_retrained": should_retrain_phobert,
-                "training_skipped": training_skipped  # 🆕
+                "training_skipped": training_skipped  
             }
         })
         model_state.current_training_job = None
 
-        logger.info("=" * 70)
-        logger.info(f"✅ TRAINING JOB {job_id} COMPLETED in {duration:.2f}s")
-        logger.info(f"📊 Strategy used: {strategy.upper()}")
-        logger.info("=" * 70)
+        logger.info(f"TRAINING JOB {job_id} COMPLETED in {duration:.2f}s")
+        logger.info(f"Strategy used: {strategy.upper()}")
+        logger.info("=" * 10)
 
     except Exception as e:
-        logger.error(f"❌ TRAINING FAILED: {e}", exc_info=True)
+        logger.error(f"TRAINING FAILED: {e}", exc_info=True)
         model_state.last_training_run.update({
             "completed_at": datetime.utcnow().isoformat() + "Z",
             "status": "FAILED",
@@ -670,7 +627,7 @@ def train_als_model_with_warmstart(
     old_model: AlternatingLeastSquares
 ) -> AlternatingLeastSquares:
     """Train with warm-start from existing model"""
-    logger.info("🔥 Training ALS with WARM-START...")
+    logger.info("Training ALS with WARM-START...")
     
     interactions_df = pd.DataFrame([
         {'user_id': i.user_id, 'product_id': i.product_id, 'weight': i.weight}
@@ -679,15 +636,14 @@ def train_als_model_with_warmstart(
     
     logger.info(f"Training data: {len(interactions_df)} interactions")
     
-    # Create new model with same hyperparameters
+    # new model same hyper params
     new_model = AlternatingLeastSquares(
         n_factors=old_model.n_factors,
         reg_param=old_model.reg_param,
-        n_iterations=5,  # Fewer iterations for warm-start
+        n_iterations=5,  
         alpha=old_model.alpha
     )
     
-    # Fit
     new_model.fit(interactions_df)
     
     # Transfer knowledge from old model (70% old + 30% new)
@@ -707,14 +663,13 @@ def train_als_model_with_warmstart(
                 0.3 * new_model.item_factors[item_idx]
             )
     
-    logger.info(f"✅ Trained: {len(new_model.user_map)} users, {len(new_model.item_map)} items")
+    logger.info(f"Trained: {len(new_model.user_map)} users, {len(new_model.item_map)} items")
     return new_model
 
-# Tiếp tục từ dòng cuối cùng của file hiện tại...
 
 def train_als_model(interactions: List[InteractionData]) -> AlternatingLeastSquares:
     """Train ALS model from scratch"""
-    logger.info("🔥 Training ALS model (FULL RETRAIN)...")
+    logger.info("Training ALS model (FULL RETRAIN)...")
     
     interactions_df = pd.DataFrame([
         {'user_id': i.user_id, 'product_id': i.product_id, 'weight': i.weight}
@@ -732,39 +687,34 @@ def train_als_model(interactions: List[InteractionData]) -> AlternatingLeastSqua
     
     als.fit(interactions_df)
     
-    logger.info(f"✅ Trained: {len(als.user_map)} users, {len(als.item_map)} items")
+    logger.info(f"Trained: {len(als.user_map)} users, {len(als.item_map)} items")
     return als
 
 
 def generate_phobert_embeddings(products: List[ProductData]) -> tuple[np.ndarray, List[str]]:
     """Generate PhoBERT embeddings (placeholder with random)"""
-    logger.info("🤖 Generating PhoBERT embeddings...")
+    logger.info("Generating PhoBERT embeddings...")
     
     n_products = len(products)
     embedding_dim = 768
     
-    # TODO: Replace with actual PhoBERT inference
     embeddings = np.random.randn(n_products, embedding_dim).astype(np.float32)
     embeddings = embeddings / (np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-8)
     
     product_ids = [p.product_id for p in products]
     
-    logger.info(f"✅ Generated embeddings: {embeddings.shape}")
-    logger.warning("⚠️  Using random embeddings - implement actual PhoBERT!")
+    logger.info(f"Generated embeddings: {embeddings.shape}")
+    logger.warning("Using random embeddings - implement actual PhoBERT!")
     
     return embeddings, product_ids
 
-
-# ============================================
-# STARTUP & SHUTDOWN
-# ============================================
+# startup & shutdown events for Eureka registration and model loading
 @app.on_event("startup")
 async def startup():
     """Initialize service"""
     try:
-        logger.info("=" * 60)
-        logger.info("Starting Recommend Service...")
-        logger.info("=" * 60)
+        logger.info("Starting Recommendation Service...")
+        logger.info("=" * 10)
 
         hostname = socket.gethostname()
         ip_address = socket.gethostbyname(hostname)
@@ -782,40 +732,38 @@ async def startup():
             duration_in_secs=90,
         )
 
-        logger.info("✅ Registered with Eureka")
+        logger.info("Registered with Eureka")
 
-        # Create directories
+
         config.MODEL_DIR.mkdir(parents=True, exist_ok=True)
         config.DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Load ALS model
         try:
             if config.ALS_MODEL_PATH.exists():
                 model_state.als_model = AlternatingLeastSquares.load(str(config.ALS_MODEL_PATH))
-                logger.info(f"✅ ALS loaded: {len(model_state.als_model.user_map)} users")
+                logger.info(f"ALS loaded: {len(model_state.als_model.user_map)} users")
             else:
-                logger.warning("⚠️  ALS model not found")
+                logger.warning("ALS model not found")
         except Exception as e:
-            logger.error(f"❌ Failed to load ALS: {e}")
+            logger.error(f"Failed to load ALS: {e}")
 
-        # Load PhoBERT
         try:
             if config.PHOBERT_EMBEDDINGS_PATH.exists():
                 with open(config.PHOBERT_EMBEDDINGS_PATH, 'rb') as f:
                     data = pickle.load(f)
                 model_state.phobert_embeddings = data['embeddings']
                 model_state.product_ids = data['product_ids']
-                logger.info(f"✅ PhoBERT loaded: {len(model_state.product_ids)} products")
+                logger.info(f"PhoBERT loaded: {len(model_state.product_ids)} products")
             else:
-                logger.warning("⚠️  PhoBERT not found")
+                logger.warning("PhoBERT not found")
         except Exception as e:
-            logger.error(f"❌ Failed to load PhoBERT: {e}")
+            logger.error(f"Failed to load PhoBERT: {e}")
 
         model_state.models_loaded = bool(model_state.als_model or model_state.phobert_embeddings)
-        logger.info("=" * 60)
+        logger.info("=" * 10)
 
     except Exception as e:
-        logger.error(f"❌ Startup error: {e}", exc_info=True)
+        logger.error(f"Startup error: {e}", exc_info=True)
         raise
 
 
@@ -825,7 +773,7 @@ async def shutdown():
     try:
         logger.info("Shutting down...")
         await eureka_client.stop_async()
-        logger.info("✅ Deregistered from Eureka")
+        logger.info("Deregistered from Eureka")
     except Exception as e:
         logger.error(f"Shutdown error: {e}")
 
@@ -856,23 +804,22 @@ def analyze_dataset_size(
     api_size = len(api_interactions)
     total_size = base_size + accumulated_size + api_size
     
-    # Decision logic
     if total_size < config.INCREMENTAL_THRESHOLD:
-        # Dataset nhỏ → Full retrain nhanh
+        # dataset nhỏ => full retrain
         strategy = 'full_retrain'
         reason = f"Total {total_size:,} < threshold {config.INCREMENTAL_THRESHOLD:,}. Full retrain nhanh và đảm bảo quality."
     
     elif config.INCREMENTAL_THRESHOLD <= total_size < config.FULL_RETRAIN_THRESHOLD:
-        # Dataset trung bình → Warmstart
+        # avg dataset => warmstart
         strategy = 'warmstart'
         reason = f"Total {total_size:,} trong khoảng [{config.INCREMENTAL_THRESHOLD:,}, {config.FULL_RETRAIN_THRESHOLD:,}). Dùng warmstart để tiết kiệm thời gian."
     
     else:
-        # Dataset lớn → Incremental
+        #big dataset => incremental learning
         strategy = 'incremental'
         reason = f"Total {total_size:,} > {config.FULL_RETRAIN_THRESHOLD:,}. Chuyển sang incremental learning."
     
-    # Special case: API data quá ít
+    # api data ít => skip training
     if api_size < 100:
         strategy = 'skip'
         reason = f"API data chỉ {api_size} interactions (< 100). Không đủ để update model, giữ nguyên model hiện tại."
@@ -902,9 +849,8 @@ def get_popular_fallback(top_k: int = 10) -> List[str]:
     if model_state.product_ids:
         return model_state.product_ids[:top_k]
     return []
-# ============================================
-# ADDITIONAL HELPER FUNCTIONS FOR PRODUCT DETAIL
-# ============================================
+
+#helper func for content use phobert
 def get_content_recommendations_phobert(product_id: str, top_k: int = 10) -> Optional[List[str]]:
     """
     Content-based recommendations using PhoBERT embeddings
@@ -925,14 +871,13 @@ def get_content_recommendations_phobert(product_id: str, top_k: int = 10) -> Opt
         return None
     
     try:
-        # Get product index
         prod_idx = model_state.product_ids.index(str(product_id))
         target_vec = model_state.phobert_embeddings[prod_idx]
         
-        # Calculate cosine similarity with all products
+        # calc cosine similarity with all products
         similarities = np.dot(model_state.phobert_embeddings, target_vec)
         
-        # Get top-k similar products (exclude self)
+        # top-k similar products (exclude self)
         top_indices = np.argsort(similarities)[::-1][1:top_k+1]
         
         recommendations = [model_state.product_ids[i] for i in top_indices]
@@ -987,13 +932,6 @@ def hybrid_merge_recommendations(
 ) -> List[str]:
     """
     Merge content-based and collaborative recommendations
-    
-    Strategy: 
-    - If both available: 60% content + 40% collaborative (default)
-    - If only content: 100% content
-    - If only collaborative: 100% collaborative
-    - If neither: empty list
-    
     Args:
         content_recs: Content-based recommendations
         collab_recs: Collaborative recommendations
@@ -1003,7 +941,6 @@ def hybrid_merge_recommendations(
     Returns:
         Merged list of product IDs
     """
-    # Case 1: Both available - hybrid merge
     if content_recs and collab_recs:
         num_content = int(top_k * content_weight)
         num_collab = top_k - num_content
@@ -1011,19 +948,18 @@ def hybrid_merge_recommendations(
         result = []
         seen = set()
         
-        # Add from content-based
+
         for pid in content_recs[:num_content]:
             if pid not in seen:
                 result.append(pid)
                 seen.add(pid)
         
-        # Add from collaborative
+
         for pid in collab_recs[:num_collab]:
             if pid not in seen and len(result) < top_k:
                 result.append(pid)
                 seen.add(pid)
-        
-        # Fill remaining from content if needed
+
         for pid in content_recs[num_content:]:
             if pid not in seen and len(result) < top_k:
                 result.append(pid)
@@ -1032,23 +968,20 @@ def hybrid_merge_recommendations(
         logger.info(f"Hybrid merge: {len(result)} items (content + collaborative)")
         return result[:top_k]
     
-    # Case 2: Only content available
+
     elif content_recs:
         logger.info(f"Using 100% content-based: {len(content_recs[:top_k])} items")
         return content_recs[:top_k]
     
-    # Case 3: Only collaborative available
     elif collab_recs:
         logger.info(f"Using 100% collaborative: {len(collab_recs[:top_k])} items")
         return collab_recs[:top_k]
-    
-    # Case 4: Neither available
+
     else:
         logger.warning("No recommendations available from either strategy")
         return []
 
-
-# API ENDPOINTS
+#api endpoint
 @app.get("/api/v1/internal/recommend/product-detail/{product_id}")
 async def recommend_product_detail(
     product_id: str,
@@ -1076,7 +1009,6 @@ async def recommend_product_detail(
     """
     logger.info(f"Product detail request: product_id={product_id}, user_id={user_id}, top_k={top_k}")
     
-    # Validate user_id type
     if user_id is not None and not isinstance(user_id, int):
         try:
             user_id = int(user_id)
@@ -1091,10 +1023,8 @@ async def recommend_product_detail(
             detail="Models not loaded yet. Please wait for training to complete."
         )
     
-    # Always try to get content-based recommendations (PhoBERT)
     content_recs = get_content_recommendations_phobert(product_id, top_k=top_k)
     
-    # Check if product exists in at least one model
     product_in_phobert = content_recs is not None
     product_in_als = (
         model_state.als_model is not None and 
@@ -1107,8 +1037,7 @@ async def recommend_product_detail(
             detail=f"Product {product_id} not found in recommendation system. "
                    f"Product may not exist or hasn't been included in training data yet."
         )
-    
-    # GUEST USER: Content-based only
+
     if not user_id:
         if content_recs and len(content_recs) > 0:
             return {
@@ -1118,7 +1047,6 @@ async def recommend_product_detail(
                 "source_product_id": product_id
             }
         else:
-            # Fallback to popular if content-based fails
             popular = get_popular_fallback(top_k)
             return {
                 "product_ids": popular,
@@ -1127,17 +1055,13 @@ async def recommend_product_detail(
                 "source_product_id": product_id
             }
     
-    # LOGGED-IN USER: Try hybrid strategy
     try:
-        # Get collaborative item-item recommendations
         collab_recs = get_similar_items_als(product_id, top_k=top_k)
-        
-        # Merge content + collaborative
         if content_recs or collab_recs:
             hybrid_recs = hybrid_merge_recommendations(
                 content_recs=content_recs,
                 collab_recs=collab_recs,
-                content_weight=0.6,  # 60% content, 40% collaborative
+                content_weight=0.6, 
                 top_k=top_k
             )
             
@@ -1156,7 +1080,6 @@ async def recommend_product_detail(
     except Exception as e:
         logger.error(f"Hybrid strategy failed: {e}")
     
-    # Final fallback to popular
     popular = get_popular_fallback(top_k)
     return {
         "product_ids": popular,
@@ -1216,7 +1139,7 @@ async def get_metrics():
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "last_training_run": model_state.last_training_run,
         "current_training_job": model_state.current_training_job,
-        "training_thresholds": {  # 🆕
+        "training_thresholds": { 
             "incremental_threshold": config.INCREMENTAL_THRESHOLD,
             "full_retrain_threshold": config.FULL_RETRAIN_THRESHOLD,
             "current_strategy": model_state.last_training_run.get('strategy', 'N/A')
@@ -1261,7 +1184,6 @@ async def root():
         "status": "online" if model_state.models_loaded else "initializing"
     }
 
-# MAIN
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=config.SERVICE_PORT)
